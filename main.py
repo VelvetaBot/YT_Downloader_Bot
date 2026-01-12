@@ -2,10 +2,20 @@ import os
 import logging
 import asyncio
 import time
-from pyrogram import Client, filters, errors
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
+from pyrogram import Client, filters, idle
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
 from keep_alive import keep_alive  
+
+# --- SILENCE THE LOGS (Fixes 'NoneType' Error) ---
+class QuietLogger:
+    def debug(self, msg): pass
+    def warning(self, msg): pass
+    def error(self, msg): print(msg)
+
+# Disable Flask Logs
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
 # --- CONFIGURATION ---
 API_ID = 11253846                   
@@ -13,10 +23,7 @@ API_HASH = "8db4eb50f557faa9a5756e64fb74a51a"
 BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
 
 # --- SETUP CLIENT ---
-app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
-# Logging
-logging.basicConfig(level=logging.INFO)
+app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
 # --- PROGRESS BAR ---
 async def progress(current, total, message, start_time, status_text):
@@ -46,7 +53,6 @@ async def start(client, message):
         "2️⃣ Select Quality ✨\n"
         "3️⃣ Wait for the magic! 📥"
     )
-    # Join button is optional now since check is disabled
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url="https://t.me/Velvetabots")]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -59,9 +65,7 @@ async def handle_link(client, message):
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
-    # --- CHECK REMOVED FOR TESTING ---
-    # We are skipping the is_member check so you can use the bot immediately.
-    
+    # No Join Check (For Testing)
     global url_store
     url_store[user_id] = url
     await show_options(message, url)
@@ -70,8 +74,12 @@ async def handle_link(client, message):
 async def show_options(message, url):
     msg = await message.reply_text("🔎 **Checking Link...**")
     try:
+        # Use QuietLogger to fix the error
         opts = {
-            'quiet': True, 'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
+            'quiet': True, 
+            'logger': QuietLogger(),
+            'cookiefile': 'cookies.txt', 
+            'source_address': '0.0.0.0',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -113,7 +121,8 @@ async def callback(client, query):
         ydl_fmt = 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'; ext = 'mp4'
 
     opts = {
-        'format': ydl_fmt, 'outtmpl': f'{filename}.%(ext)s', 'quiet': True,
+        'format': ydl_fmt, 'outtmpl': f'{filename}.%(ext)s', 
+        'quiet': True, 'logger': QuietLogger(),
         'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     }
@@ -145,5 +154,6 @@ async def callback(client, query):
 
 if __name__ == '__main__':
     keep_alive()
-    print("✅ Bot Started (Check Disabled)")
-    app.run()
+    print("✅ Bot Started (Silent Mode)")
+    app.start()
+    idle()
