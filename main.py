@@ -2,61 +2,57 @@ import os
 import logging
 import asyncio
 import time
-from pyrogram import Client, filters
+from pyrogram import Client, filters, errors
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
 import yt_dlp
-from keep_alive import keep_alive  # Keeps Render awake
+from keep_alive import keep_alive  
 
 # --- CONFIGURATION ---
-API_ID = 11253846                   # Your New Key
-API_HASH = "8db4eb50f557faa9a5756e64fb74a51a"  # Your New Secret
+API_ID = 11253846                   
+API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
 BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
 
-# Channel Details
-CHANNEL_ID = -1001840010906
+# USE USERNAME INSTEAD OF ID (More Reliable)
+CHANNEL_USERNAME = "Velvetabots"  
 CHANNEL_INVITE_LINK = "https://t.me/Velvetabots"
 
-# --- SETUP PYROGRAM CLIENT (The 2GB Engine) ---
+# --- SETUP CLIENT ---
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # Logging
 logging.basicConfig(level=logging.INFO)
 
-# --- PROGRESS BAR FUNCTION ---
+# --- PROGRESS BAR ---
 async def progress(current, total, message, start_time, status_text):
     try:
         now = time.time()
         diff = now - start_time
-        # Update every 5 seconds to avoid spamming Telegram
         if round(diff % 5.00) == 0 or current == total:
             percentage = current * 100 / total
             speed = current / diff if diff > 0 else 0
-            
-            # Bar: [🟩🟩🟩⬜⬜]
             filled_blocks = int(percentage / 10)
             bar = "🟩" * filled_blocks + "⬜" * (10 - filled_blocks)
-            
-            # Size calc
             current_mb = round(current / 1024 / 1024, 2)
             total_mb = round(total / 1024 / 1024, 2)
-            
-            text = (
-                f"{status_text}\n"
-                f"{bar} **{round(percentage, 1)}%**\n"
-                f"📊 {current_mb}MB / {total_mb}MB\n"
-                f"🚀 Speed: {round(speed / 1024 / 1024, 2)} MB/s"
-            )
+            text = f"{status_text}\n{bar} **{round(percentage, 1)}%**\n📊 {current_mb}MB / {total_mb}MB\n🚀 Speed: {round(speed / 1024 / 1024, 2)} MB/s"
             await message.edit_text(text)
     except Exception:
         pass
 
-# --- CHECK MEMBERSHIP ---
+# --- CHECK MEMBERSHIP (DEBUG MODE) ---
 async def is_member(user_id):
     try:
-        member = await app.get_chat_member(CHANNEL_ID, user_id)
-        return member.status in ['creator', 'administrator', 'member']
-    except:
+        # Using USERNAME is safer for public channels
+        member = await app.get_chat_member(CHANNEL_USERNAME, user_id)
+        if member.status in ['creator', 'administrator', 'member']:
+            return True
+    except errors.UserNotParticipant:
+        return False
+    except Exception as e:
+        # If there is a weird error (like Bot not Admin), we print it to logs
+        print(f"Check Error: {e}")
         return False # Fail safe
+    return False
 
 # --- START COMMAND ---
 @app.on_message(filters.command("start"))
@@ -77,10 +73,7 @@ async def start(client, message):
     if not joined:
         buttons.append([InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_INVITE_LINK)])
     
-    await message.reply_text(
-        welcome_text,
-        reply_markup=InlineKeyboardMarkup(buttons) if buttons else None
-    )
+    await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons) if buttons else None)
 
 # --- HANDLE LINKS ---
 @app.on_message(filters.text & ~filters.command("start"))
@@ -91,10 +84,10 @@ async def handle_link(client, message):
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
-    # Force Subscribe Check
+    # Check Membership
     if not await is_member(user_id):
         await message.reply_text(
-            "⚠️ **Access Restricted!**\nPlease join our channel to use this bot.",
+            "⚠️ **Access Restricted!**\nPlease join our channel to use this bot.\n(Make sure the bot is an ADMIN in the channel!)",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📢 Join Channel", url=CHANNEL_INVITE_LINK)],
                 [InlineKeyboardButton("✅ I Have Joined", callback_data=f"check_join")]
@@ -102,47 +95,30 @@ async def handle_link(client, message):
         )
         return
 
-    # Store URL in memory (Simple Dictionary)
-    # Note: In a real heavy production app, use a database. For this, memory is fine.
     global url_store
     url_store[user_id] = url
-    
     await show_options(message, url)
 
 # --- SHOW OPTIONS ---
 async def show_options(message, url):
     msg = await message.reply_text("🔎 **Checking Link...**")
-    
     try:
-        # STEALTH MODE SETTINGS
         opts = {
-            'quiet': True, 
-            'cookiefile': 'cookies.txt',
-            'source_address': '0.0.0.0',
+            'quiet': True, 'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             title = info.get('title', 'Video')
-            
         await msg.delete()
-        
         buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎥 1080p", callback_data="1080")],
-            [InlineKeyboardButton("🎥 720p", callback_data="720")],
-            [InlineKeyboardButton("🎥 360p", callback_data="360")],
-            [InlineKeyboardButton("🎵 Audio (MP3)", callback_data="mp3")]
+            [InlineKeyboardButton("🎥 1080p", callback_data="1080"), InlineKeyboardButton("🎥 720p", callback_data="720")],
+            [InlineKeyboardButton("🎥 360p", callback_data="360"), InlineKeyboardButton("🎵 Audio (MP3)", callback_data="mp3")]
         ])
-        
-        await message.reply_text(
-            f"🎬 **{title}**\n\n👇 **Select Quality:**",
-            reply_markup=buttons
-        )
-
+        await message.reply_text(f"🎬 **{title}**\n\n👇 **Select Quality:**", reply_markup=buttons)
     except Exception as e:
         await msg.edit_text(f"⚠️ Error: {e}")
 
-# Global Memory for URLs
 url_store = {}
 
 # --- HANDLE BUTTONS ---
@@ -151,99 +127,65 @@ async def callback(client, query):
     data = query.data
     user_id = query.from_user.id
     
-    # 1. CHECK JOIN
     if data == "check_join":
         if await is_member(user_id):
             await query.answer("✅ Verified!")
             await query.message.delete()
             await query.message.reply_text("✅ **Verified!** Send the link again.")
         else:
-            await query.answer("❌ You haven't joined yet!", show_alert=True)
+            await query.answer("❌ Still not detected! Ensure Bot is Admin.", show_alert=True)
         return
 
-    # 2. RETRIEVE URL
     url = url_store.get(user_id)
     if not url:
-         await query.answer("❌ Link expired. Send it again.", show_alert=True)
+         await query.answer("❌ Link expired.", show_alert=True)
          return
 
     await query.message.delete()
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
-    
-    # 3. SETUP DOWNLOAD
     filename = f"vid_{user_id}_{int(time.time())}"
     
     if data == "mp3":
-        ydl_fmt = 'bestaudio/best'
-        ext = 'mp3'
+        ydl_fmt = 'bestaudio/best'; ext = 'mp3'
     elif data == "1080":
-        ydl_fmt = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
-        ext = 'mp4'
+        ydl_fmt = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'; ext = 'mp4'
     elif data == "720":
-        ydl_fmt = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
-        ext = 'mp4'
+        ydl_fmt = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'; ext = 'mp4'
     else: 
-        ydl_fmt = 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
-        ext = 'mp4'
+        ydl_fmt = 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'; ext = 'mp4'
 
-    # STEALTH OPTS
     opts = {
-        'format': ydl_fmt,
-        'outtmpl': f'{filename}.%(ext)s',
-        'quiet': True,
-        'cookiefile': 'cookies.txt', 
-        'source_address': '0.0.0.0',
+        'format': ydl_fmt, 'outtmpl': f'{filename}.%(ext)s', 'quiet': True,
+        'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     }
-    
     if data == "mp3":
         opts['postprocessors'] = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}]
 
     final_path = f"{filename}.{ext}"
 
     try:
-        # DOWNLOAD
         await status_msg.edit_text("📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
-        
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
 
-        # UPLOAD (2GB SUPPORTED!)
         await status_msg.edit_text("☁️ **UPLOADING...**\n(This supports up to 2GB!)")
-        
         start_time = time.time()
         
-        # Audio Upload
         if data == "mp3":
-            await app.send_audio(
-                query.message.chat.id,
-                audio=final_path,
-                caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**",
-                progress=progress,
-                progress_args=(start_time, "☁️ **UPLOADING AUDIO...**", status_msg, start_time, "☁️ **UPLOADING AUDIO...**") 
-            )
-        # Video Upload
+            await app.send_audio(query.message.chat.id, audio=final_path, caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", progress=progress, progress_args=(start_time, "☁️ **UPLOADING AUDIO...**"))
         else:
-            await app.send_video(
-                query.message.chat.id,
-                video=final_path,
-                caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**",
-                supports_streaming=True,
-                progress=progress,
-                progress_args=(start_time, "☁️ **UPLOADING VIDEO...**")
-            )
+            await app.send_video(query.message.chat.id, video=final_path, caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", supports_streaming=True, progress=progress, progress_args=(start_time, "☁️ **UPLOADING VIDEO...**"))
             
         await status_msg.delete()
 
     except Exception as e:
         await status_msg.edit_text(f"⚠️ Error: {e}")
-    
     finally:
         if os.path.exists(final_path):
             os.remove(final_path)
 
-# --- RUN ---
 if __name__ == '__main__':
     keep_alive()
-    print("✅ Bot Started (Pyrogram 2GB Engine)")
+    print("✅ Bot Started")
     app.run()
