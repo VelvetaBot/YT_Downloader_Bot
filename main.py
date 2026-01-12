@@ -12,10 +12,6 @@ API_ID = 11253846
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
 BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
 
-# USE USERNAME INSTEAD OF ID (More Reliable)
-CHANNEL_USERNAME = "Velvetabots"  
-CHANNEL_INVITE_LINK = "https://t.me/Velvetabots"
-
 # --- SETUP CLIENT ---
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
@@ -39,27 +35,9 @@ async def progress(current, total, message, start_time, status_text):
     except Exception:
         pass
 
-# --- CHECK MEMBERSHIP (DEBUG MODE) ---
-async def is_member(user_id):
-    try:
-        # Using USERNAME is safer for public channels
-        member = await app.get_chat_member(CHANNEL_USERNAME, user_id)
-        if member.status in ['creator', 'administrator', 'member']:
-            return True
-    except errors.UserNotParticipant:
-        return False
-    except Exception as e:
-        # If there is a weird error (like Bot not Admin), we print it to logs
-        print(f"Check Error: {e}")
-        return False # Fail safe
-    return False
-
 # --- START COMMAND ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    user_id = message.from_user.id
-    joined = await is_member(user_id)
-    
     welcome_text = (
         "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n"
         "I can download videos **up to 2GB!** 🚀\n\n"
@@ -68,12 +46,9 @@ async def start(client, message):
         "2️⃣ Select Quality ✨\n"
         "3️⃣ Wait for the magic! 📥"
     )
-    
-    buttons = []
-    if not joined:
-        buttons.append([InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_INVITE_LINK)])
-    
-    await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons) if buttons else None)
+    # Join button is optional now since check is disabled
+    buttons = [[InlineKeyboardButton("📢 Join Update Channel", url="https://t.me/Velvetabots")]]
+    await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
 
 # --- HANDLE LINKS ---
 @app.on_message(filters.text & ~filters.command("start"))
@@ -84,17 +59,9 @@ async def handle_link(client, message):
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
-    # Check Membership
-    if not await is_member(user_id):
-        await message.reply_text(
-            "⚠️ **Access Restricted!**\nPlease join our channel to use this bot.\n(Make sure the bot is an ADMIN in the channel!)",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📢 Join Channel", url=CHANNEL_INVITE_LINK)],
-                [InlineKeyboardButton("✅ I Have Joined", callback_data=f"check_join")]
-            ])
-        )
-        return
-
+    # --- CHECK REMOVED FOR TESTING ---
+    # We are skipping the is_member check so you can use the bot immediately.
+    
     global url_store
     url_store[user_id] = url
     await show_options(message, url)
@@ -127,18 +94,9 @@ async def callback(client, query):
     data = query.data
     user_id = query.from_user.id
     
-    if data == "check_join":
-        if await is_member(user_id):
-            await query.answer("✅ Verified!")
-            await query.message.delete()
-            await query.message.reply_text("✅ **Verified!** Send the link again.")
-        else:
-            await query.answer("❌ Still not detected! Ensure Bot is Admin.", show_alert=True)
-        return
-
     url = url_store.get(user_id)
     if not url:
-         await query.answer("❌ Link expired.", show_alert=True)
+         await query.answer("❌ Link expired. Send again.", show_alert=True)
          return
 
     await query.message.delete()
@@ -187,5 +145,5 @@ async def callback(client, query):
 
 if __name__ == '__main__':
     keep_alive()
-    print("✅ Bot Started")
+    print("✅ Bot Started (Check Disabled)")
     app.run()
