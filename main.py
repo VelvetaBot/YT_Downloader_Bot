@@ -171,6 +171,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'outtmpl': f'{filename}.%(ext)s',
             'quiet': True,
             'socket_timeout': 60,
+            'cookiefile': 'cookies.txt',  # <--- THIS IS THE MAGIC LINE
         }
         
         file_ext = 'mp4'
@@ -257,3 +258,4 @@ if __name__ == '__main__':
     
     print("✅ Velveta Bot (Render Version) is Running...")
     application.run_polling()
+
