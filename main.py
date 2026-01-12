@@ -101,12 +101,13 @@ async def show_quality_options(update, context, url):
     status = await context.bot.send_message(chat_id=chat_id, text="🔎 **Searching for video details...** ⏳")
     
     try:
-        # OPTIONS FOR METADATA FETCH
+        # STEALTH OPTIONS FOR METADATA
         opts = {
             'quiet': True, 
             'socket_timeout': 15, 
             'cookiefile': 'cookies.txt',
-            'source_address': '0.0.0.0' # Force IPv4
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'source_address': '0.0.0.0'
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -159,7 +160,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=chat_id, text="❌ **Link Expired.** Please send it again.")
             return
 
-        # --- BIG TEXT START ---
         status_msg = await query.edit_message_text(
             text="⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%", 
             parse_mode='Markdown'
@@ -176,14 +176,15 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chosen_format = quality_map.get(data)
         filename = f"velveta_{chat_id}_{query.message.message_id}"
         
-        # --- THE FIX: ADDED IPv4 FORCING ---
+        # --- THE STEALTH FIX: FAKE BROWSER AGENT ---
         ydl_opts = {
             'format': chosen_format,
             'outtmpl': f'{filename}.%(ext)s',
             'quiet': True,
             'socket_timeout': 60,
-            'cookiefile': 'cookies.txt',  # Use ID Card
-            'source_address': '0.0.0.0',  # Force IPv4 (Helps bypass blocks)
+            'cookiefile': 'cookies.txt',  
+            'source_address': '0.0.0.0',
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         }
         
         file_ext = 'mp4'
@@ -198,7 +199,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_file = f"{filename}.{file_ext}"
 
         try:
-            # --- BIG TEXT DOWNLOAD ---
             await context.bot.edit_message_text(
                 chat_id=chat_id, message_id=status_msg.message_id, 
                 text="📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%", 
@@ -208,7 +208,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
 
-            # CHECK SIZE AND UPLOAD
             if os.path.getsize(final_file) > 50 * 1024 * 1024:
                 await context.bot.edit_message_text(
                     chat_id=chat_id, message_id=status_msg.message_id,
@@ -217,7 +216,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 caption = "✅ **Download Complete!**\n🤖 @Velveta_YT_Downloader_bot"
                 
-                # --- BIG TEXT UPLOAD ---
                 sent = False
                 for attempt in range(1, 4):
                     try:
@@ -268,6 +266,5 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(button_click))
     
     keep_alive()
-    print("✅ Velveta Bot (Fix + Big Text) is Running...")
+    print("✅ Velveta Bot (Stealth Mode) is Running...")
     application.run_polling()
-    
