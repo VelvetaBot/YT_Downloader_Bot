@@ -6,6 +6,9 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 import yt_dlp
 from telegram.error import BadRequest, TimedOut, NetworkError
 
+# --- IMPORT KEEP ALIVE (For Render Cloud) ---
+from keep_alive import keep_alive  
+
 # --- CONFIGURATION ---
 BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
 CHANNEL_ID = -1001840010906
@@ -26,18 +29,24 @@ async def check_membership(user_id, context):
         else:
             return False
     except BadRequest:
-        print("Error: Bot is likely not admin in the channel.")
-        return False
+        return False 
     except Exception as e:
         print(f"Error checking membership: {e}")
         return False
 
-# --- 1. START COMMAND ---
+# --- 1. START COMMAND (UPGRADED MESSAGE 🌟) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
-        "🌟 **Welcome to Velveta Downloader!** 🌟\n\n"
-        "I can download videos for you instantly!\n"
-        "Please send a valid YouTube link to start. 🚀"
+        "🌟 **Welcome to Velveta Downloader!** 🌟\n"
+        "Your Ultimate YouTube Companion! 🎬✨\n\n"
+        "I can help you download:\n"
+        "🎥 **High Quality Videos** (1080p, 720p)\n"
+        "🎧 **Crystal Clear Audio** (MP3)\n\n"
+        "🚀 **How to use me:**\n"
+        "1️⃣ Copy a YouTube link 🔗\n"
+        "2️⃣ Paste it here 💬\n"
+        "3️⃣ Select your quality and enjoy! ⚡\n\n"
+        "👇 **Join our update channel to keep this bot free!**"
     )
     user_id = update.effective_user.id
     is_member = await check_membership(user_id, context)
@@ -61,6 +70,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text
     chat_id = update.effective_chat.id
 
+    # Filter: Only YouTube links
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
@@ -69,8 +79,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_member:
         text = (
             f"⚠️ **Hi {update.effective_user.first_name}!**\n\n"
-            "To download this video, you must join our channel first.\n"
-            "👇 Click below, then try again!"
+            "🔒 **Access Restricted**\n"
+            "To download this video, you must join our channel first.\n\n"
+            "👇 **Click below to Join, then try again!**"
         )
         keyboard = [
             [InlineKeyboardButton("📢 Join Channel", url=CHANNEL_INVITE_LINK)],
@@ -88,7 +99,7 @@ async def show_quality_options(update, context, url):
     chat_id = update.effective_chat.id
     context.user_data['current_url'] = url
     
-    status = await context.bot.send_message(chat_id=chat_id, text="🔎 **Fetching video details...**")
+    status = await context.bot.send_message(chat_id=chat_id, text="🔎 **Searching for video details...** ⏳")
     
     try:
         with yt_dlp.YoutubeDL({'quiet': True, 'socket_timeout': 15}) as ydl:
@@ -110,7 +121,7 @@ async def show_quality_options(update, context, url):
     
     await context.bot.send_message(
         chat_id=chat_id, 
-        text=f"🎬 **{title}**\n\n✨ **Select quality:**", 
+        text=f"🎬 **{title}**\n\n✨ **Select your preferred quality:**", 
         reply_markup=reply_markup, 
         parse_mode='Markdown'
     )
@@ -125,13 +136,13 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith('check_join_'):
         is_member = await check_membership(user_id, context)
         if is_member:
-            await query.answer("✅ Verified!")
+            await query.answer("✅ Verified! Welcome back.")
             await query.delete_message()
             pending_url = context.user_data.get('pending_url')
             if pending_url:
                 await show_quality_options(update, context, pending_url)
             else:
-                await context.bot.send_message(chat_id=chat_id, text="✅ **Verified!** Send link now.")
+                await context.bot.send_message(chat_id=chat_id, text="✅ **Verified!** Send me a link now! 🚀")
         else:
             await query.answer("❌ You haven't joined yet!", show_alert=True)
 
@@ -139,13 +150,10 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         url = context.user_data.get('current_url')
         if not url:
-            await context.bot.send_message(chat_id=chat_id, text="❌ Link expired.")
+            await context.bot.send_message(chat_id=chat_id, text="❌ **Link Expired.** Please send it again.")
             return
 
-        status_msg = await query.edit_message_text(
-            text="⏳ **Initiating...**\n[□□□□□□□□□□] 0%", 
-            parse_mode='Markdown'
-        )
+        status_msg = await query.edit_message_text(text="⏳ **Initiating Download...**", parse_mode='Markdown')
 
         quality_map = {
             'qual_1080': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
@@ -162,7 +170,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'format': chosen_format,
             'outtmpl': f'{filename}.%(ext)s',
             'quiet': True,
-            'socket_timeout': 30,
+            'socket_timeout': 60,
         }
         
         file_ext = 'mp4'
@@ -177,52 +185,55 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_file = f"{filename}.{file_ext}"
 
         try:
+            # 1. DOWNLOAD FROM YOUTUBE
             await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=status_msg.message_id,
-                text="⬇️ **Downloading from YouTube...**\n[■■■■□□□□□□] 40%",
-                parse_mode='Markdown'
+                chat_id=chat_id, message_id=status_msg.message_id, 
+                text="⬇️ **Downloading from YouTube...**\n[■■■■□□□□□□] 40%", parse_mode='Markdown'
             )
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
 
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=status_msg.message_id,
-                text="☁️ **Uploading to Telegram...**\n[■■■■■■■■□□] 80%\n(This might take a moment)",
-                parse_mode='Markdown'
-            )
-
+            # 2. CHECK SIZE AND UPLOAD
             if os.path.getsize(final_file) > 50 * 1024 * 1024:
                 await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=status_msg.message_id,
-                    text="❌ **File too large (>50MB).** Telegram blocked it.\nPlease try 720p or 360p."
+                    chat_id=chat_id, message_id=status_msg.message_id,
+                    text="❌ **File too large (>50MB).**\nTelegram limits bots to 50MB uploads. Please choose a lower quality (like 360p or MP3)."
                 )
             else:
                 caption = "✅ **Download Complete!**\n🤖 @Velveta_YT_Downloader_bot"
-                with open(final_file, 'rb') as f:
-                    if data == 'qual_mp3':
-                        await context.bot.send_audio(
-                            chat_id=chat_id, 
-                            audio=f, 
-                            title=context.user_data.get('video_title'), 
-                            caption=caption,
-                            read_timeout=1200, write_timeout=1200, connect_timeout=1200
-                        )
-                    else:
-                        await context.bot.send_video(
-                            chat_id=chat_id, 
-                            video=f, 
-                            caption=caption,
-                            read_timeout=1200, write_timeout=1200, connect_timeout=1200
-                        )
                 
-                await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
+                # RETRY LOGIC (Tries 3 times if internet fails)
+                sent = False
+                for attempt in range(1, 4):
+                    try:
+                        await context.bot.edit_message_text(
+                            chat_id=chat_id, message_id=status_msg.message_id,
+                            text=f"☁️ **Uploading to Telegram...**\n[■■■■■■■■□□] 80%\n(Attempt {attempt}/3)", parse_mode='Markdown'
+                        )
+                        
+                        with open(final_file, 'rb') as f:
+                            if data == 'qual_mp3':
+                                await context.bot.send_audio(
+                                    chat_id=chat_id, audio=f, title=context.user_data.get('video_title'), caption=caption,
+                                    read_timeout=1200, write_timeout=1200, connect_timeout=1200
+                                )
+                            else:
+                                await context.bot.send_video(
+                                    chat_id=chat_id, video=f, caption=caption,
+                                    read_timeout=1200, write_timeout=1200, connect_timeout=1200
+                                )
+                        sent = True
+                        break 
+                    except (TimedOut, NetworkError):
+                        await asyncio.sleep(5)
+                        continue
 
-        except (TimedOut, NetworkError):
-             await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="⚠️ **Network Error!**\nUpload failed due to slow internet. Please try again.")
+                if sent:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
+                else:
+                    await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="⚠️ **Failed to upload.**\nThe server connection is too unstable.")
+
         except Exception as e:
             await context.bot.send_message(chat_id=chat_id, text=f"⚠️ **Error:** {e}")
         finally:
@@ -231,20 +242,18 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- 4. MAIN EXECUTION ---
 if __name__ == '__main__':
-    # MAXIMIZED TIMEOUTS FOR MOBILE DATA
     application = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
-        .connect_timeout(1200)
-        .read_timeout(1200) 
-        .write_timeout(1200)
-        .pool_timeout(1200)
+        .connect_timeout(1200).read_timeout(1200).write_timeout(1200).pool_timeout(1200)
         .build()
     )
-    
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     application.add_handler(CallbackQueryHandler(button_click))
     
-    print("✅ Velveta Bot (Mobile Optimized) is Running...")
+    # KEEPS THE BOT ALIVE ON RENDER
+    keep_alive()
+    
+    print("✅ Velveta Bot (Render Version) is Running...")
     application.run_polling()
