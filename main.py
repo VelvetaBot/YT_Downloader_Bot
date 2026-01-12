@@ -2,7 +2,6 @@ import sys
 import os
 
 # --- SYSTEM PATCH (Fixes 'NoneType' write error) ---
-# This forces the bot to write to a "Fake Screen" if the real one is missing.
 class FakeWriter:
     def write(self, text): pass
     def flush(self): pass
@@ -27,8 +26,8 @@ BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
 # --- SETUP CLIENT ---
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
-# Logging Config
-logging.basicConfig(level=logging.INFO, stream=sys.stdout) # Force logging to our patch
+# Logging (Force to patched stdout)
+logging.basicConfig(level=logging.INFO, stream=sys.stdout) 
 
 # --- PROGRESS BAR ---
 async def progress(current, total, message, start_time, status_text):
@@ -70,7 +69,6 @@ async def handle_link(client, message):
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
-    # No Join Check (Disabled for testing)
     global url_store
     url_store[user_id] = url
     await show_options(message, url)
@@ -79,7 +77,6 @@ async def handle_link(client, message):
 async def show_options(message, url):
     msg = await message.reply_text("🔎 **Checking Link...**")
     try:
-        # Use simple quiet options
         opts = {
             'quiet': True, 
             'noprogress': True,
@@ -116,21 +113,33 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
     filename = f"vid_{user_id}_{int(time.time())}"
     
+    # --- FLEXIBLE FORMATS (Fixes 'Format Not Available') ---
     if data == "mp3":
-        ydl_fmt = 'bestaudio/best'; ext = 'mp3'
+        ydl_fmt = 'bestaudio/best'
+        ext = 'mp3'
     elif data == "1080":
-        ydl_fmt = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'; ext = 'mp4'
+        # Get BEST video <= 1080p (any format) + BEST audio
+        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]'
+        ext = 'mp4'
     elif data == "720":
-        ydl_fmt = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'; ext = 'mp4'
+        ydl_fmt = 'bestvideo[height<=720]+bestaudio/best[height<=720]'
+        ext = 'mp4'
     else: 
-        ydl_fmt = 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'; ext = 'mp4'
+        ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]'
+        ext = 'mp4'
 
     opts = {
-        'format': ydl_fmt, 'outtmpl': f'{filename}.%(ext)s', 
-        'quiet': True, 'noprogress': True, # No progress bar printed to logs
+        'format': ydl_fmt, 
+        'outtmpl': f'{filename}.%(ext)s',
+        'quiet': True, 'noprogress': True,
         'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     }
+    
+    # Force MP4 Output
+    if data != "mp3":
+        opts['merge_output_format'] = 'mp4'
+
     if data == "mp3":
         opts['postprocessors'] = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}]
 
@@ -159,5 +168,5 @@ async def callback(client, query):
 
 if __name__ == '__main__':
     keep_alive()
-    print("✅ Bot Started (System Patched)")
+    print("✅ Bot Started (Flexible Formats)")
     app.run()
