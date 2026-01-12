@@ -8,21 +8,18 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
 from keep_alive import keep_alive  
 
-# --- 1. THE UNIVERSAL SILENCER (Fixes ALL Attribute Errors) ---
+# --- 1. THE UNIVERSAL SILENCER (Prevents Crashes) ---
 class UniversalFakeLogger:
-    # Standard stream methods (for sys.stdout/stderr)
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
     def isatty(self): return False
-    
-    # Logger methods (for yt-dlp)
     def debug(self, *args, **kwargs): pass
     def warning(self, *args, **kwargs): pass
     def error(self, *args, **kwargs): pass
     def info(self, *args, **kwargs): pass
     def critical(self, *args, **kwargs): pass
 
-# Apply the Silencer to System Outputs immediately
+# Apply Silencer
 silent_logger = UniversalFakeLogger()
 sys.stdout = silent_logger
 sys.stderr = silent_logger
@@ -33,16 +30,17 @@ API_HASH = "8db4eb50f557faa9a5756e64fb74a51a"
 BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
 
 # --- 3. SETUP CLIENT ---
-app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
+# We enable IPv6 to help with connection stability
+app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=False)
 
-# --- 4. SMART PROGRESS BAR ---
+# --- 4. RELIABLE PROGRESS BAR ---
 async def progress(current, total, message, start_time, status_text):
     try:
         now = time.time()
         diff = now - start_time
         
-        # Only update if 5 seconds passed OR it's 100% complete
-        if round(diff % 5.00) == 0 or current == total:
+        # Update every 8 seconds (Less frequent = More stable)
+        if round(diff % 8.00) == 0 or current == total:
             percentage = current * 100 / total
             speed = current / diff if diff > 0 else 0
             
@@ -52,16 +50,14 @@ async def progress(current, total, message, start_time, status_text):
             current_mb = round(current / 1024 / 1024, 2)
             total_mb = round(total / 1024 / 1024, 2)
             
-            text = f"{status_text}\n{bar} **{round(percentage, 1)}%**\n📊 {current_mb}MB / {total_mb}MB\n🚀 Speed: {round(speed / 1024 / 1024, 2)} MB/s"
+            # Simple, clear text
+            text = f"{status_text}\n{bar} **{round(percentage, 1)}%**\n📊 {current_mb}MB / {total_mb}MB"
             
-            # Prevent "Message Not Modified" Error
             if message.text != text:
                 await message.edit_text(text)
                 
-    except errors.MessageNotModified:
-        pass 
     except Exception:
-        pass 
+        pass # If progress update fails, just keep uploading
 
 # --- START COMMAND ---
 @app.on_message(filters.command("start"))
@@ -94,11 +90,10 @@ async def handle_link(client, message):
 async def show_options(message, url):
     msg = await message.reply_text("🔎 **Checking Link...**")
     try:
-        # Use Universal Silencer for logger to fix 'no attribute debug'
         opts = {
             'quiet': True, 
             'noprogress': True,
-            'logger': silent_logger,  # <--- FIX IS HERE
+            'logger': silent_logger,
             'cookiefile': 'cookies.txt', 
             'source_address': '0.0.0.0',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -151,15 +146,14 @@ async def callback(client, query):
         'format': ydl_fmt, 
         'outtmpl': f'{filename}.%(ext)s',
         'quiet': True, 'noprogress': True,
-        'logger': silent_logger, # <--- FIX IS HERE
+        'logger': silent_logger,
         'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     }
     
     if data != "mp3":
         opts['merge_output_format'] = 'mp4'
-
-    if data == "mp3":
+    else:
         opts['postprocessors'] = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}]
 
     final_path = f"{filename}.{ext}"
@@ -172,10 +166,24 @@ async def callback(client, query):
         await status_msg.edit_text("☁️ **UPLOADING...**\n(This supports up to 2GB!)")
         start_time = time.time()
         
+        # NOTE: Explicitly passing the 'progress' function here
         if data == "mp3":
-            await app.send_audio(query.message.chat.id, audio=final_path, caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", progress=progress, progress_args=(start_time, "☁️ **UPLOADING AUDIO...**"))
+            await app.send_audio(
+                query.message.chat.id, 
+                audio=final_path, 
+                caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", 
+                progress=progress, 
+                progress_args=(status_msg, start_time, "☁️ **UPLOADING AUDIO...**")
+            )
         else:
-            await app.send_video(query.message.chat.id, video=final_path, caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", supports_streaming=True, progress=progress, progress_args=(start_time, "☁️ **UPLOADING VIDEO...**"))
+            await app.send_video(
+                query.message.chat.id, 
+                video=final_path, 
+                caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", 
+                supports_streaming=True, 
+                progress=progress, 
+                progress_args=(status_msg, start_time, "☁️ **UPLOADING VIDEO...**")
+            )
             
         await status_msg.delete()
 
@@ -191,5 +199,5 @@ async def callback(client, query):
 
 if __name__ == '__main__':
     keep_alive()
-    print("✅ Bot Started (Universal Silencer Mode)")
+    print("✅ Bot Started (Progress Bar Fixed)")
     app.run()
