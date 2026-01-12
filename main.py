@@ -34,7 +34,7 @@ async def check_membership(user_id, context):
         print(f"Error checking membership: {e}")
         return False
 
-# --- 1. START COMMAND (UPGRADED MESSAGE 🌟) ---
+# --- 1. START COMMAND ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         "🌟 **Welcome to Velveta Downloader!** 🌟\n"
@@ -70,7 +70,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text
     chat_id = update.effective_chat.id
 
-    # Filter: Only YouTube links
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
@@ -102,7 +101,8 @@ async def show_quality_options(update, context, url):
     status = await context.bot.send_message(chat_id=chat_id, text="🔎 **Searching for video details...** ⏳")
     
     try:
-        with yt_dlp.YoutubeDL({'quiet': True, 'socket_timeout': 15}) as ydl:
+        # NOTE: 'cookiefile': 'cookies.txt' MUST be here for YouTube to work!
+        with yt_dlp.YoutubeDL({'quiet': True, 'socket_timeout': 15, 'cookiefile': 'cookies.txt'}) as ydl:
             info = ydl.extract_info(url, download=False)
             title = info.get('title', 'Video')
             context.user_data['video_title'] = title
@@ -153,7 +153,11 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=chat_id, text="❌ **Link Expired.** Please send it again.")
             return
 
-        status_msg = await query.edit_message_text(text="⏳ **Initiating Download...**", parse_mode='Markdown')
+        # --- BIGGER START MESSAGE ---
+        status_msg = await query.edit_message_text(
+            text="⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%", 
+            parse_mode='Markdown'
+        )
 
         quality_map = {
             'qual_1080': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
@@ -171,7 +175,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'outtmpl': f'{filename}.%(ext)s',
             'quiet': True,
             'socket_timeout': 60,
-            'cookiefile': 'cookies.txt',  # <--- THIS IS THE MAGIC LINE
+            'cookiefile': 'cookies.txt',  # <--- CRITICAL FOR YOUTUBE
         }
         
         file_ext = 'mp4'
@@ -186,31 +190,33 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_file = f"{filename}.{file_ext}"
 
         try:
-            # 1. DOWNLOAD FROM YOUTUBE
+            # --- BIGGER DOWNLOAD MESSAGE ---
             await context.bot.edit_message_text(
                 chat_id=chat_id, message_id=status_msg.message_id, 
-                text="⬇️ **Downloading from YouTube...**\n[■■■■□□□□□□] 40%", parse_mode='Markdown'
+                text="📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%", 
+                parse_mode='Markdown'
             )
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
 
-            # 2. CHECK SIZE AND UPLOAD
+            # CHECK SIZE AND UPLOAD
             if os.path.getsize(final_file) > 50 * 1024 * 1024:
                 await context.bot.edit_message_text(
                     chat_id=chat_id, message_id=status_msg.message_id,
-                    text="❌ **File too large (>50MB).**\nTelegram limits bots to 50MB uploads. Please choose a lower quality (like 360p or MP3)."
+                    text="❌ **File too large (>50MB).**\nTelegram limits bots to 50MB uploads. Please choose a lower quality."
                 )
             else:
                 caption = "✅ **Download Complete!**\n🤖 @Velveta_YT_Downloader_bot"
                 
-                # RETRY LOGIC (Tries 3 times if internet fails)
+                # --- BIGGER UPLOAD MESSAGE ---
                 sent = False
                 for attempt in range(1, 4):
                     try:
                         await context.bot.edit_message_text(
                             chat_id=chat_id, message_id=status_msg.message_id,
-                            text=f"☁️ **Uploading to Telegram...**\n[■■■■■■■■□□] 80%\n(Attempt {attempt}/3)", parse_mode='Markdown'
+                            text=f"☁️ **UPLOADING...**\n🟩🟩🟩🟩🟩🟩🟩🟩⬜⬜ 80%\n(Attempt {attempt}/3)", 
+                            parse_mode='Markdown'
                         )
                         
                         with open(final_file, 'rb') as f:
@@ -233,7 +239,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if sent:
                     await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
                 else:
-                    await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="⚠️ **Failed to upload.**\nThe server connection is too unstable.")
+                    await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="⚠️ **Failed to upload.**")
 
         except Exception as e:
             await context.bot.send_message(chat_id=chat_id, text=f"⚠️ **Error:** {e}")
@@ -253,9 +259,6 @@ if __name__ == '__main__':
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     application.add_handler(CallbackQueryHandler(button_click))
     
-    # KEEPS THE BOT ALIVE ON RENDER
     keep_alive()
-    
-    print("✅ Velveta Bot (Render Version) is Running...")
+    print("✅ Velveta Bot (Big Text) is Running...")
     application.run_polling()
-
