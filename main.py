@@ -11,17 +11,18 @@ from keep_alive import keep_alive
 # --- 1. THE UNIVERSAL SILENCER (Fixes ALL Attribute Errors) ---
 class UniversalFakeLogger:
     # Standard stream methods (for sys.stdout/stderr)
-    def write(self, text): pass
-    def flush(self): pass
+    def write(self, *args, **kwargs): pass
+    def flush(self, *args, **kwargs): pass
     def isatty(self): return False
     
     # Logger methods (for yt-dlp)
-    def debug(self, msg): pass
-    def warning(self, msg): pass
-    def error(self, msg): pass
-    def info(self, msg): pass
+    def debug(self, *args, **kwargs): pass
+    def warning(self, *args, **kwargs): pass
+    def error(self, *args, **kwargs): pass
+    def info(self, *args, **kwargs): pass
+    def critical(self, *args, **kwargs): pass
 
-# Apply the Silencer to System Outputs
+# Apply the Silencer to System Outputs immediately
 silent_logger = UniversalFakeLogger()
 sys.stdout = silent_logger
 sys.stderr = silent_logger
@@ -40,6 +41,7 @@ async def progress(current, total, message, start_time, status_text):
         now = time.time()
         diff = now - start_time
         
+        # Only update if 5 seconds passed OR it's 100% complete
         if round(diff % 5.00) == 0 or current == total:
             percentage = current * 100 / total
             speed = current / diff if diff > 0 else 0
@@ -52,6 +54,7 @@ async def progress(current, total, message, start_time, status_text):
             
             text = f"{status_text}\n{bar} **{round(percentage, 1)}%**\n📊 {current_mb}MB / {total_mb}MB\n🚀 Speed: {round(speed / 1024 / 1024, 2)} MB/s"
             
+            # Prevent "Message Not Modified" Error
             if message.text != text:
                 await message.edit_text(text)
                 
@@ -178,7 +181,7 @@ async def callback(client, query):
 
     except Exception as e:
         # Ignore ALL logging-related errors
-        if "NoneType" in str(e) or "FakeWriter" in str(e):
+        if "NoneType" in str(e) or "FakeWriter" in str(e) or "UniversalFakeLogger" in str(e):
             pass
         else:
             await status_msg.edit_text(f"⚠️ Error: {e}")
