@@ -177,14 +177,12 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         filename = f"velveta_{chat_id}_{query.message.message_id}"
         
         # --- THE FIX: ADDED IPv4 FORCING ---
-        ydl_opts = {
-            'format': chosen_format,
-            'outtmpl': f'{filename}.%(ext)s',
-            'quiet': True,
-            'socket_timeout': 60,
-            'cookiefile': 'cookies.txt',  # Use ID Card
-            'source_address': '0.0.0.0',  # Force IPv4 (Helps bypass blocks)
-        }
+ydl_opts = {
+    'format': 'best',
+    'outtmpl': '%(title)s.%(ext)s',
+    'cookiefile': 'cookies.txt',  # <--- ADD THIS EXACT LINE
+    # ... any other options you already had ...
+}
         
         file_ext = 'mp4'
         if data == 'qual_mp3':
@@ -270,3 +268,4 @@ if __name__ == '__main__':
     keep_alive()
     print("✅ Velveta Bot (Fix + Big Text) is Running...")
     application.run_polling()
+
