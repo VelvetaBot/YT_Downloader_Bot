@@ -1,21 +1,23 @@
+import sys
 import os
+
+# --- SYSTEM PATCH (Fixes 'NoneType' write error) ---
+# This forces the bot to write to a "Fake Screen" if the real one is missing.
+class FakeWriter:
+    def write(self, text): pass
+    def flush(self): pass
+
+if sys.stdout is None: sys.stdout = FakeWriter()
+if sys.stderr is None: sys.stderr = FakeWriter()
+
+# --- IMPORTS ---
 import logging
 import asyncio
 import time
-from pyrogram import Client, filters, idle
+from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
 from keep_alive import keep_alive  
-
-# --- SILENCE THE LOGS (Fixes 'NoneType' Error) ---
-class QuietLogger:
-    def debug(self, msg): pass
-    def warning(self, msg): pass
-    def error(self, msg): print(msg)
-
-# Disable Flask Logs
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)
 
 # --- CONFIGURATION ---
 API_ID = 11253846                   
@@ -24,6 +26,9 @@ BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
 
 # --- SETUP CLIENT ---
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
+
+# Logging Config
+logging.basicConfig(level=logging.INFO, stream=sys.stdout) # Force logging to our patch
 
 # --- PROGRESS BAR ---
 async def progress(current, total, message, start_time, status_text):
@@ -65,7 +70,7 @@ async def handle_link(client, message):
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
-    # No Join Check (For Testing)
+    # No Join Check (Disabled for testing)
     global url_store
     url_store[user_id] = url
     await show_options(message, url)
@@ -74,10 +79,10 @@ async def handle_link(client, message):
 async def show_options(message, url):
     msg = await message.reply_text("🔎 **Checking Link...**")
     try:
-        # Use QuietLogger to fix the error
+        # Use simple quiet options
         opts = {
             'quiet': True, 
-            'logger': QuietLogger(),
+            'noprogress': True,
             'cookiefile': 'cookies.txt', 
             'source_address': '0.0.0.0',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -122,7 +127,7 @@ async def callback(client, query):
 
     opts = {
         'format': ydl_fmt, 'outtmpl': f'{filename}.%(ext)s', 
-        'quiet': True, 'logger': QuietLogger(),
+        'quiet': True, 'noprogress': True, # No progress bar printed to logs
         'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     }
@@ -154,6 +159,5 @@ async def callback(client, query):
 
 if __name__ == '__main__':
     keep_alive()
-    print("✅ Bot Started (Silent Mode)")
-    app.start()
-    idle()
+    print("✅ Bot Started (System Patched)")
+    app.run()
