@@ -1,270 +1,249 @@
 import os
 import logging
 import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+import time
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
 import yt_dlp
-from telegram.error import BadRequest, TimedOut, NetworkError
-
-# --- IMPORT KEEP ALIVE (For Render Cloud) ---
-from keep_alive import keep_alive  
+from keep_alive import keep_alive  # Keeps Render awake
 
 # --- CONFIGURATION ---
+API_ID = 11253846                   # Your New Key
+API_HASH = "8db4eb50f557faa9a5756e64fb74a51a"  # Your New Secret
 BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
+
+# Channel Details
 CHANNEL_ID = -1001840010906
 CHANNEL_INVITE_LINK = "https://t.me/Velvetabots"
 
-# Setup Logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# --- SETUP PYROGRAM CLIENT (The 2GB Engine) ---
+app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- HELPER: CHECK MEMBERSHIP ---
-async def check_membership(user_id, context):
+# Logging
+logging.basicConfig(level=logging.INFO)
+
+# --- PROGRESS BAR FUNCTION ---
+async def progress(current, total, message, start_time, status_text):
     try:
-        member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-        if member.status in ['creator', 'administrator', 'member']:
-            return True
-        else:
-            return False
-    except BadRequest:
-        return False 
-    except Exception as e:
-        print(f"Error checking membership: {e}")
-        return False
+        now = time.time()
+        diff = now - start_time
+        # Update every 5 seconds to avoid spamming Telegram
+        if round(diff % 5.00) == 0 or current == total:
+            percentage = current * 100 / total
+            speed = current / diff if diff > 0 else 0
+            
+            # Bar: [🟩🟩🟩⬜⬜]
+            filled_blocks = int(percentage / 10)
+            bar = "🟩" * filled_blocks + "⬜" * (10 - filled_blocks)
+            
+            # Size calc
+            current_mb = round(current / 1024 / 1024, 2)
+            total_mb = round(total / 1024 / 1024, 2)
+            
+            text = (
+                f"{status_text}\n"
+                f"{bar} **{round(percentage, 1)}%**\n"
+                f"📊 {current_mb}MB / {total_mb}MB\n"
+                f"🚀 Speed: {round(speed / 1024 / 1024, 2)} MB/s"
+            )
+            await message.edit_text(text)
+    except Exception:
+        pass
 
-# --- 1. START COMMAND ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- CHECK MEMBERSHIP ---
+async def is_member(user_id):
+    try:
+        member = await app.get_chat_member(CHANNEL_ID, user_id)
+        return member.status in ['creator', 'administrator', 'member']
+    except:
+        return False # Fail safe
+
+# --- START COMMAND ---
+@app.on_message(filters.command("start"))
+async def start(client, message):
+    user_id = message.from_user.id
+    joined = await is_member(user_id)
+    
     welcome_text = (
-        "🌟 **Welcome to Velveta Downloader!** 🌟\n"
-        "Your Ultimate YouTube Companion! 🎬✨\n\n"
-        "I can help you download:\n"
-        "🎥 **High Quality Videos** (1080p, 720p)\n"
-        "🎧 **Crystal Clear Audio** (MP3)\n\n"
-        "🚀 **How to use me:**\n"
-        "1️⃣ Copy a YouTube link 🔗\n"
-        "2️⃣ Paste it here 💬\n"
-        "3️⃣ Select your quality and enjoy! ⚡\n\n"
-        "👇 **Join our update channel to keep this bot free!**"
+        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n"
+        "I can download videos **up to 2GB!** 🚀\n\n"
+        "**How to use:**\n"
+        "1️⃣ Send a YouTube link 🔗\n"
+        "2️⃣ Select Quality ✨\n"
+        "3️⃣ Wait for the magic! 📥"
     )
-    user_id = update.effective_user.id
-    is_member = await check_membership(user_id, context)
     
-    keyboard = []
-    if not is_member:
-        keyboard.append([InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_INVITE_LINK)])
+    buttons = []
+    if not joined:
+        buttons.append([InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_INVITE_LINK)])
     
-    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-    
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id, 
-        text=welcome_text, 
-        parse_mode='Markdown',
-        reply_markup=reply_markup
+    await message.reply_text(
+        welcome_text,
+        reply_markup=InlineKeyboardMarkup(buttons) if buttons else None
     )
 
-# --- 2. HANDLE MESSAGES ---
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    url = update.message.text
-    chat_id = update.effective_chat.id
-
+# --- HANDLE LINKS ---
+@app.on_message(filters.text & ~filters.command("start"))
+async def handle_link(client, message):
+    url = message.text
+    user_id = message.from_user.id
+    
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
-    is_member = await check_membership(user_id, context)
-
-    if not is_member:
-        text = (
-            f"⚠️ **Hi {update.effective_user.first_name}!**\n\n"
-            "🔒 **Access Restricted**\n"
-            "To download this video, you must join our channel first.\n\n"
-            "👇 **Click below to Join, then try again!**"
+    # Force Subscribe Check
+    if not await is_member(user_id):
+        await message.reply_text(
+            "⚠️ **Access Restricted!**\nPlease join our channel to use this bot.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📢 Join Channel", url=CHANNEL_INVITE_LINK)],
+                [InlineKeyboardButton("✅ I Have Joined", callback_data=f"check_join")]
+            ])
         )
-        keyboard = [
-            [InlineKeyboardButton("📢 Join Channel", url=CHANNEL_INVITE_LINK)],
-            [InlineKeyboardButton("✅ I Have Joined", callback_data=f'check_join_{user_id}')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode='Markdown')
-        context.user_data['pending_url'] = url
         return
 
-    await show_quality_options(update, context, url)
-
-# --- HELPER: SHOW BUTTONS ---
-async def show_quality_options(update, context, url):
-    chat_id = update.effective_chat.id
-    context.user_data['current_url'] = url
+    # Store URL in memory (Simple Dictionary)
+    # Note: In a real heavy production app, use a database. For this, memory is fine.
+    global url_store
+    url_store[user_id] = url
     
-    status = await context.bot.send_message(chat_id=chat_id, text="🔎 **Searching for video details...** ⏳")
+    await show_options(message, url)
+
+# --- SHOW OPTIONS ---
+async def show_options(message, url):
+    msg = await message.reply_text("🔎 **Checking Link...**")
     
     try:
-        # STEALTH OPTIONS FOR METADATA
+        # STEALTH MODE SETTINGS
         opts = {
             'quiet': True, 
-            'socket_timeout': 15, 
             'cookiefile': 'cookies.txt',
+            'source_address': '0.0.0.0',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'source_address': '0.0.0.0'
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             title = info.get('title', 'Video')
-            context.user_data['video_title'] = title
-    except:
-        title = "YouTube Video"
-        context.user_data['video_title'] = title
+            
+        await msg.delete()
         
-    await context.bot.delete_message(chat_id=chat_id, message_id=status.message_id)
-
-    keyboard = [
-        [InlineKeyboardButton("🎥 1080p (HD)", callback_data='qual_1080'), InlineKeyboardButton("🎥 720p (HD)", callback_data='qual_720')],
-        [InlineKeyboardButton("🎥 360p (SD)", callback_data='qual_360'), InlineKeyboardButton("🎥 144p (Low)", callback_data='qual_144')],
-        [InlineKeyboardButton("🎵 Audio Only (MP3)", callback_data='qual_mp3')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await context.bot.send_message(
-        chat_id=chat_id, 
-        text=f"🎬 **{title}**\n\n✨ **Select your preferred quality:**", 
-        reply_markup=reply_markup, 
-        parse_mode='Markdown'
-    )
-
-# --- 3. HANDLE BUTTON CLICKS ---
-async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    data = query.data
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-
-    if data.startswith('check_join_'):
-        is_member = await check_membership(user_id, context)
-        if is_member:
-            await query.answer("✅ Verified! Welcome back.")
-            await query.delete_message()
-            pending_url = context.user_data.get('pending_url')
-            if pending_url:
-                await show_quality_options(update, context, pending_url)
-            else:
-                await context.bot.send_message(chat_id=chat_id, text="✅ **Verified!** Send me a link now! 🚀")
-        else:
-            await query.answer("❌ You haven't joined yet!", show_alert=True)
-
-    elif data.startswith('qual_'):
-        await query.answer()
-        url = context.user_data.get('current_url')
-        if not url:
-            await context.bot.send_message(chat_id=chat_id, text="❌ **Link Expired.** Please send it again.")
-            return
-
-        status_msg = await query.edit_message_text(
-            text="⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%", 
-            parse_mode='Markdown'
+        buttons = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎥 1080p", callback_data="1080")],
+            [InlineKeyboardButton("🎥 720p", callback_data="720")],
+            [InlineKeyboardButton("🎥 360p", callback_data="360")],
+            [InlineKeyboardButton("🎵 Audio (MP3)", callback_data="mp3")]
+        ])
+        
+        await message.reply_text(
+            f"🎬 **{title}**\n\n👇 **Select Quality:**",
+            reply_markup=buttons
         )
 
-        quality_map = {
-            'qual_1080': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            'qual_720': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            'qual_360': 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            'qual_144': 'bestvideo[height<=144][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            'qual_mp3': 'bestaudio/best'
-        }
-        
-        chosen_format = quality_map.get(data)
-        filename = f"velveta_{chat_id}_{query.message.message_id}"
-        
-        # --- THE STEALTH FIX: FAKE BROWSER AGENT ---
-        ydl_opts = {
-            'format': chosen_format,
-            'outtmpl': f'{filename}.%(ext)s',
-            'quiet': True,
-            'socket_timeout': 60,
-            'cookiefile': 'cookies.txt',  
-            'source_address': '0.0.0.0',
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        }
-        
-        file_ext = 'mp4'
-        if data == 'qual_mp3':
-            ydl_opts['postprocessors'] = [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }]
-            file_ext = 'mp3'
+    except Exception as e:
+        await msg.edit_text(f"⚠️ Error: {e}")
 
-        final_file = f"{filename}.{file_ext}"
+# Global Memory for URLs
+url_store = {}
 
-        try:
-            await context.bot.edit_message_text(
-                chat_id=chat_id, message_id=status_msg.message_id, 
-                text="📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%", 
-                parse_mode='Markdown'
-            )
-
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-
-            if os.path.getsize(final_file) > 50 * 1024 * 1024:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id, message_id=status_msg.message_id,
-                    text="❌ **File too large (>50MB).**\nTelegram limits bots to 50MB uploads. Please choose a lower quality."
-                )
-            else:
-                caption = "✅ **Download Complete!**\n🤖 @Velveta_YT_Downloader_bot"
-                
-                sent = False
-                for attempt in range(1, 4):
-                    try:
-                        await context.bot.edit_message_text(
-                            chat_id=chat_id, message_id=status_msg.message_id,
-                            text=f"☁️ **UPLOADING...**\n🟩🟩🟩🟩🟩🟩🟩🟩⬜⬜ 80%\n(Attempt {attempt}/3)", 
-                            parse_mode='Markdown'
-                        )
-                        
-                        with open(final_file, 'rb') as f:
-                            if data == 'qual_mp3':
-                                await context.bot.send_audio(
-                                    chat_id=chat_id, audio=f, title=context.user_data.get('video_title'), caption=caption,
-                                    read_timeout=1200, write_timeout=1200, connect_timeout=1200
-                                )
-                            else:
-                                await context.bot.send_video(
-                                    chat_id=chat_id, video=f, caption=caption,
-                                    read_timeout=1200, write_timeout=1200, connect_timeout=1200
-                                )
-                        sent = True
-                        break 
-                    except (TimedOut, NetworkError):
-                        await asyncio.sleep(5)
-                        continue
-
-                if sent:
-                    await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
-                else:
-                    await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="⚠️ **Failed to upload.**")
-
-        except Exception as e:
-            await context.bot.send_message(chat_id=chat_id, text=f"⚠️ **Error:** {e}")
-        finally:
-            if os.path.exists(final_file):
-                os.remove(final_file)
-
-# --- 4. MAIN EXECUTION ---
-if __name__ == '__main__':
-    application = (
-        ApplicationBuilder()
-        .token(BOT_TOKEN)
-        .connect_timeout(1200).read_timeout(1200).write_timeout(1200).pool_timeout(1200)
-        .build()
-    )
-    application.add_handler(CommandHandler('start', start))
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-    application.add_handler(CallbackQueryHandler(button_click))
+# --- HANDLE BUTTONS ---
+@app.on_callback_query()
+async def callback(client, query):
+    data = query.data
+    user_id = query.from_user.id
     
+    # 1. CHECK JOIN
+    if data == "check_join":
+        if await is_member(user_id):
+            await query.answer("✅ Verified!")
+            await query.message.delete()
+            await query.message.reply_text("✅ **Verified!** Send the link again.")
+        else:
+            await query.answer("❌ You haven't joined yet!", show_alert=True)
+        return
+
+    # 2. RETRIEVE URL
+    url = url_store.get(user_id)
+    if not url:
+         await query.answer("❌ Link expired. Send it again.", show_alert=True)
+         return
+
+    await query.message.delete()
+    status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
+    
+    # 3. SETUP DOWNLOAD
+    filename = f"vid_{user_id}_{int(time.time())}"
+    
+    if data == "mp3":
+        ydl_fmt = 'bestaudio/best'
+        ext = 'mp3'
+    elif data == "1080":
+        ydl_fmt = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+        ext = 'mp4'
+    elif data == "720":
+        ydl_fmt = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+        ext = 'mp4'
+    else: 
+        ydl_fmt = 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+        ext = 'mp4'
+
+    # STEALTH OPTS
+    opts = {
+        'format': ydl_fmt,
+        'outtmpl': f'{filename}.%(ext)s',
+        'quiet': True,
+        'cookiefile': 'cookies.txt', 
+        'source_address': '0.0.0.0',
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    }
+    
+    if data == "mp3":
+        opts['postprocessors'] = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}]
+
+    final_path = f"{filename}.{ext}"
+
+    try:
+        # DOWNLOAD
+        await status_msg.edit_text("📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
+        
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+
+        # UPLOAD (2GB SUPPORTED!)
+        await status_msg.edit_text("☁️ **UPLOADING...**\n(This supports up to 2GB!)")
+        
+        start_time = time.time()
+        
+        # Audio Upload
+        if data == "mp3":
+            await app.send_audio(
+                query.message.chat.id,
+                audio=final_path,
+                caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**",
+                progress=progress,
+                progress_args=(start_time, "☁️ **UPLOADING AUDIO...**", status_msg, start_time, "☁️ **UPLOADING AUDIO...**") 
+            )
+        # Video Upload
+        else:
+            await app.send_video(
+                query.message.chat.id,
+                video=final_path,
+                caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**",
+                supports_streaming=True,
+                progress=progress,
+                progress_args=(start_time, "☁️ **UPLOADING VIDEO...**")
+            )
+            
+        await status_msg.delete()
+
+    except Exception as e:
+        await status_msg.edit_text(f"⚠️ Error: {e}")
+    
+    finally:
+        if os.path.exists(final_path):
+            os.remove(final_path)
+
+# --- RUN ---
+if __name__ == '__main__':
     keep_alive()
-    print("✅ Velveta Bot (Stealth Mode) is Running...")
-    application.run_polling()
+    print("✅ Bot Started (Pyrogram 2GB Engine)")
+    app.run()
