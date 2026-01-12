@@ -101,8 +101,14 @@ async def show_quality_options(update, context, url):
     status = await context.bot.send_message(chat_id=chat_id, text="🔎 **Searching for video details...** ⏳")
     
     try:
-        # NOTE: 'cookiefile': 'cookies.txt' MUST be here for YouTube to work!
-        with yt_dlp.YoutubeDL({'quiet': True, 'socket_timeout': 15, 'cookiefile': 'cookies.txt'}) as ydl:
+        # OPTIONS FOR METADATA FETCH
+        opts = {
+            'quiet': True, 
+            'socket_timeout': 15, 
+            'cookiefile': 'cookies.txt',
+            'source_address': '0.0.0.0' # Force IPv4
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             title = info.get('title', 'Video')
             context.user_data['video_title'] = title
@@ -153,7 +159,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=chat_id, text="❌ **Link Expired.** Please send it again.")
             return
 
-        # --- BIGGER START MESSAGE ---
+        # --- BIG TEXT START ---
         status_msg = await query.edit_message_text(
             text="⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%", 
             parse_mode='Markdown'
@@ -170,12 +176,14 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chosen_format = quality_map.get(data)
         filename = f"velveta_{chat_id}_{query.message.message_id}"
         
+        # --- THE FIX: ADDED IPv4 FORCING ---
         ydl_opts = {
             'format': chosen_format,
             'outtmpl': f'{filename}.%(ext)s',
             'quiet': True,
             'socket_timeout': 60,
-            'cookiefile': 'cookies.txt',  # <--- CRITICAL FOR YOUTUBE
+            'cookiefile': 'cookies.txt',  # Use ID Card
+            'source_address': '0.0.0.0',  # Force IPv4 (Helps bypass blocks)
         }
         
         file_ext = 'mp4'
@@ -190,7 +198,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_file = f"{filename}.{file_ext}"
 
         try:
-            # --- BIGGER DOWNLOAD MESSAGE ---
+            # --- BIG TEXT DOWNLOAD ---
             await context.bot.edit_message_text(
                 chat_id=chat_id, message_id=status_msg.message_id, 
                 text="📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%", 
@@ -209,7 +217,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 caption = "✅ **Download Complete!**\n🤖 @Velveta_YT_Downloader_bot"
                 
-                # --- BIGGER UPLOAD MESSAGE ---
+                # --- BIG TEXT UPLOAD ---
                 sent = False
                 for attempt in range(1, 4):
                     try:
@@ -260,5 +268,5 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(button_click))
     
     keep_alive()
-    print("✅ Velveta Bot (Big Text) is Running...")
+    print("✅ Velveta Bot (Fix + Big Text) is Running...")
     application.run_polling()
