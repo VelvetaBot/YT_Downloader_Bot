@@ -2,12 +2,12 @@ import sys
 import os
 import asyncio
 import time
-from pyrogram import Client, filters, errors
+from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
 from keep_alive import keep_alive  
 
-# --- 1. THE UNIVERSAL SILENCER (Prevents Crashes) ---
+# --- 1. THE UNIVERSAL SILENCER ---
 class UniversalFakeLogger:
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
@@ -27,8 +27,9 @@ API_ID = 11253846
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
 BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
 
-# 💰 NEW DONATION LINK
-SUPPORT_LINK = "https://buymeacoffee.com/VelvetaBots" 
+# LINKS
+CHANNEL_LINK = "https://t.me/Velvetabots"              # For Start Button
+DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"   # For Download Button
 
 # --- 3. SETUP CLIENT ---
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=False)
@@ -50,37 +51,26 @@ async def progress(current, total, message, start_time, status_text):
     except Exception:
         pass 
 
-# --- 5. GROUP MODERATION (Auto-Delete Hi/Welcome & Bad Links) ---
+# --- 5. GROUP MODERATION ---
 @app.on_message(filters.group, group=1)
 async def group_moderation(client, message):
     if not message.text: return
-    
     text = message.text.lower()
     
-    # A. DELETE GREETINGS (Hi, Hello, Welcome...)
-    # We check if the message IS just a greeting or starts with it
+    # A. Delete Greetings
     greetings = ["hi", "hello", "hlo", "welcome", "hey", "hii", "hy"]
     if text in greetings or (len(text) < 10 and any(text.startswith(x) for x in greetings)):
-        try:
-            await message.delete()
-            return # Stop here, don't check links
-        except:
-            pass # Bot might not be Admin
+        try: await message.delete()
+        except: pass
+        return
 
-    # B. DELETE NON-YOUTUBE LINKS
-    # If it contains "http" but NO "youtube" or "youtu.be"
+    # B. Delete Non-YouTube Links
     if "http" in text:
         if "youtube.com" not in text and "youtu.be" not in text:
-            try:
-                await message.delete()
-                # Optional: Send a warning message that auto-deletes
-                # warning = await message.reply("⚠️ **Only YouTube links are allowed here!**")
-                # await asyncio.sleep(5)
-                # await warning.delete()
-            except:
-                pass
+            try: await message.delete()
+            except: pass
 
-# --- 6. START COMMAND ---
+# --- 6. START COMMAND (Only Join Channel) ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
     welcome_text = (
@@ -91,31 +81,29 @@ async def start(client, message):
         "2️⃣ Select Quality ✨\n"
         "3️⃣ Wait for the magic! 📥"
     )
-    buttons = [[InlineKeyboardButton("☕ Donate / Support", url=SUPPORT_LINK)]]
+    # RESTORED: Join Channel Button Only
+    buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
 
-# --- 7. HANDLE DOWNLOADS (Works in Private & Groups) ---
+# --- 7. HANDLE DOWNLOADS ---
 @app.on_message(filters.text & ~filters.command("start"), group=2)
 async def handle_link(client, message):
     url = message.text
     user_id = message.from_user.id
     
-    # Only process YouTube links
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
     global url_store
     url_store[user_id] = {'url': url, 'msg_id': message.id}
-    
     await show_options(message, url)
 
 # --- SHOW OPTIONS ---
 async def show_options(message, url):
-    # Reply to the link
     try:
         msg = await message.reply_text("🔎 **Checking Link...**", quote=True)
     except:
-        return # If message was deleted by filter, stop
+        return
 
     try:
         opts = {
@@ -193,7 +181,8 @@ async def callback(client, query):
         await status_msg.edit_text("☁️ **UPLOADING...**\n(This supports up to 2GB!)")
         start_time = time.time()
         
-        donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate / Support", url=SUPPORT_LINK)]])
+        # DONATE BUTTON (Only appears after download)
+        donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate / Support", url=DONATE_LINK)]])
         thumb = thumb_path if os.path.exists(thumb_path) else None
 
         if data == "mp3":
@@ -231,5 +220,5 @@ async def callback(client, query):
 
 if __name__ == '__main__':
     keep_alive()
-    print("✅ Bot Started (Group Moderation + Donate)")
+    print("✅ Bot Started (Start=Join, Finish=Donate)")
     app.run()
