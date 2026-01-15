@@ -4,7 +4,6 @@ import asyncio
 import time
 import logging
 import threading
-import re
 from flask import Flask
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -23,7 +22,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v21.0 - Full Auth Mode)"
+    return "✅ Bot is Running (v22.0 - Client Rotation)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -33,49 +32,18 @@ t = threading.Thread(target=run_web_server)
 t.daemon = True
 t.start()
 
-# --- 3. SMART LOGGER (CAPTURES LOGIN CODE) ---
-class OAuthLogger:
-    def __init__(self, client, chat_id, msg_id):
-        self.client = client
-        self.chat_id = chat_id
-        self.msg_id = msg_id
-        self.code_detected = False
-
+# --- 3. THE SILENCER ---
+class UniversalFakeLogger:
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
     def isatty(self): return False
-    
-    def debug(self, msg): self.check_auth(msg)
-    def info(self, msg): self.check_auth(msg)
-    def warning(self, msg): self.check_auth(msg)
-    def error(self, msg): self.check_auth(msg)
+    def debug(self, *args, **kwargs): pass
+    def warning(self, *args, **kwargs): pass
+    def error(self, *args, **kwargs): pass
+    def info(self, *args, **kwargs): pass
+    def critical(self, *args, **kwargs): pass
 
-    def check_auth(self, msg):
-        # Capture the Google Device Code
-        if "google.com/device" in msg and not self.code_detected:
-            self.code_detected = True
-            try:
-                # Regex to find code like "R45G-H78J"
-                match = re.search(r'code\s+([A-Z0-9-]+)', msg)
-                if match:
-                    code = match.group(1)
-                    text = (
-                        f"⚠️ **YOUTUBE LOGIN REQUIRED** ⚠️\n\n"
-                        f"Server blocked! Authorize it to continue:\n"
-                        f"1️⃣ Open: [google.com/device](https://www.google.com/device)\n"
-                        f"2️⃣ Enter Code: `{code}`\n\n"
-                        f"⏳ **Waiting for authorization...**"
-                    )
-                    self.client.loop.create_task(
-                        self.client.edit_message_text(
-                            chat_id=self.chat_id, 
-                            message_id=self.msg_id, 
-                            text=text, 
-                            disable_web_page_preview=True
-                        )
-                    )
-            except:
-                pass
+silent_logger = UniversalFakeLogger()
 
 # --- 4. SETUP CLIENT ---
 logging.basicConfig(level=logging.INFO)
@@ -102,11 +70,15 @@ async def progress(current, total, message, start_time, status_text):
 @app.on_message(filters.command("start"))
 async def start(client, message):
     welcome_text = (
-        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n\n"
-        "**NOTE:** If prompted, please enter the login code in Google.\n"
-        "This unlocks the bot permanently for this session."
+        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n"
+        "I can download videos **up to 2GB!** 🚀\n\n"
+        "**How to use:**\n"
+        "1️⃣ Send a YouTube link 🔗\n"
+        "2️⃣ Select Quality (4K to 144p) ✨\n"
+        "3️⃣ I will use multiple disguises to download! 📥"
     )
-    await message.reply_text(welcome_text)
+    buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
+    await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
 
 @app.on_message(filters.text & ~filters.command("start"), group=2)
 async def handle_link(client, message):
@@ -118,24 +90,35 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 7. SHOW OPTIONS (WITH AUTH SUPPORT) ---
+# --- 7. SHOW OPTIONS (TRY MULTIPLE CLIENTS) ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Scanning Video...**", quote=True)
+    msg = await message.reply_text("🔎 **Scanning (Rotating IPs)...**", quote=True)
     
-    # Use OAuth Logger HERE too (Critical Fix)
-    custom_logger = OAuthLogger(app, message.chat.id, msg.id)
+    # We attempt scanning with different clients until one works
+    clients = ['ios', 'android', 'tv', 'web']
+    info = None
+    last_error = ""
 
-    opts = {
-        'quiet': False, # Must be False to see logs
-        'logger': custom_logger,
-        'username': 'oauth2', # Trigger Login if blocked
-        'extractor_args': {'youtube': {'player_client': ['android']}},
-    }
+    for client_name in clients:
+        try:
+            opts = {
+                'quiet': True, 
+                'noprogress': True, 
+                'logger': silent_logger,
+                'extractor_args': {'youtube': {'player_client': [client_name]}},
+            }
+            info = await asyncio.to_thread(run_sync_info, opts, url)
+            if info: break # Stop if successful
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+    if not info:
+        await msg.edit_text(f"⚠️ **Scan Failed.**\nYouTube blocked all attempts.\nError: {last_error}")
+        return
 
     try:
-        info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
-
         resolutions = [2160, 1440, 1080, 720, 480, 360, 240, 144]
         buttons_list = []
         for res in resolutions:
@@ -150,10 +133,7 @@ async def show_options(message, url):
         await message.reply_text(f"🎬 **{title}**", reply_markup=InlineKeyboardMarkup(keyboard), quote=True)
     
     except Exception as e:
-        if "Sign in" in str(e):
-            await msg.edit_text("❌ **Login Required:** Please follow the steps above (Code) to unlock.")
-        else:
-            await msg.edit_text(f"⚠️ **Error:** {e}")
+        await msg.edit_text(f"⚠️ **Error:** {e}")
 
 def run_sync_download(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl: return ydl.download([url])
@@ -163,7 +143,7 @@ def run_sync_info(opts, url):
 
 url_store = {}
 
-# --- 8. DOWNLOAD HANDLER (WITH AUTH SUPPORT) ---
+# --- 8. DOWNLOAD HANDLER (CLIENT ROTATION) ---
 @app.on_callback_query()
 async def callback(client, query):
     data = query.data
@@ -174,7 +154,7 @@ async def callback(client, query):
     url = stored['url']
     
     if data == "warn_144":
-        await query.message.edit_text("⚠️ **144p is blurry. Confirm?**", 
+        await query.message.edit_text("⚠️ **Confirm 144p Download?**", 
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Yes", callback_data="video_144")]]))
         return
 
@@ -186,34 +166,48 @@ async def callback(client, query):
         ydl_fmt = 'bestaudio/best'; ext = 'mp3'
     else:
         res = data.split("_")[1]
-        ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best/best'; ext = 'mp4'
+        ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'; ext = 'mp4'
 
-    # Attach Logger again for Download Phase
-    custom_logger = OAuthLogger(app, query.message.chat.id, status_msg.id)
-    
-    opts = {
-        'format': ydl_fmt,
-        'outtmpl': f'{filename}.%(ext)s',
-        'quiet': False, 
-        'logger': custom_logger,
-        'username': 'oauth2', 
-        'writethumbnail': True,
-        'concurrent_fragment_downloads': 5,
-        'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-    }
-    
-    if ext == "mp3": 
-        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
-    else:
-        opts['merge_output_format'] = 'mp4'
-
-    final_path = f"{filename}.{ext}"
-    thumb_path = f"{filename}.jpg"
+    # ROTATION STRATEGY: Try ios -> tv -> android -> web
+    clients_to_try = ['ios', 'tv', 'android', 'web']
+    success = False
 
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING...**")
-        await asyncio.to_thread(run_sync_download, opts, url)
+        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(Trying multiple methods...)")
         
+        final_path = f"{filename}.{ext}"
+        thumb_path = f"{filename}.jpg"
+
+        for client_name in clients_to_try:
+            try:
+                opts = {
+                    'format': ydl_fmt,
+                    'outtmpl': f'{filename}.%(ext)s',
+                    'quiet': True, 
+                    'noprogress': True, 
+                    'logger': silent_logger,
+                    'extractor_args': {'youtube': {'player_client': [client_name]}},
+                    'writethumbnail': True,
+                    'concurrent_fragment_downloads': 5,
+                    'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
+                }
+                
+                if ext == "mp3": 
+                    opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
+                else:
+                    opts['merge_output_format'] = 'mp4'
+                
+                await asyncio.to_thread(run_sync_download, opts, url)
+                
+                if os.path.exists(final_path) and os.path.getsize(final_path) > 0:
+                    success = True
+                    break # Success!
+            except:
+                continue # Try next client
+
+        if not success:
+            raise Exception("Server IP is blocked by YouTube.")
+
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
         thumb = thumb_path if os.path.exists(thumb_path) else None
@@ -225,10 +219,7 @@ async def callback(client, query):
         
         await status_msg.delete()
     except Exception as e:
-        if "Sign in" in str(e):
-            await status_msg.edit_text("❌ **Login Timed Out / Failed.**")
-        else:
-            await status_msg.edit_text(f"⚠️ Error: {e}")
+        await status_msg.edit_text(f"⚠️ Error: {e}")
     finally:
         if os.path.exists(final_path): os.remove(final_path)
         if os.path.exists(thumb_path): os.remove(thumb_path)
