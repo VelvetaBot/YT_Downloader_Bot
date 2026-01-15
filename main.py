@@ -22,7 +22,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v26.0 - Googlebot Mode)"
+    return "✅ Bot is Running (v25.0 - Scan Bypass)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -71,8 +71,8 @@ async def progress(current, total, message, start_time, status_text):
 async def start(client, message):
     welcome_text = (
         "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n\n"
-        "**System Status:** Googlebot Mode Active 🤖\n"
-        "I am disguised as a Search Engine to bypass blocks!"
+        "**System Status:** Scan Bypass Active 🛡️\n"
+        "I will force download even if YouTube blocks scanning!"
     )
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -87,21 +87,19 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 7. SHOW OPTIONS (GOOGLEBOT SPOOF) ---
+# --- 7. SHOW OPTIONS (WITH FALLBACK) ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Scanning (Googlebot Mode)...**", quote=True)
+    msg = await message.reply_text("🔎 **Scanning Link...**", quote=True)
     
     try:
-        # THE TRICK: Pretend to be Googlebot
+        # Try to scan normally first
         opts = {
             'quiet': True, 
             'noprogress': True, 
             'logger': silent_logger,
-            'cookiefile': None, # NO COOKIES
-            'user_agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-            'extractor_args': {'youtube': {'player_client': ['android_creator']}}, # Obscure client
+            'cookiefile': 'cookies.txt',
+            'extractor_args': {'youtube': {'player_client': ['android']}},
         }
-        
         info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
 
@@ -118,8 +116,18 @@ async def show_options(message, url):
         await msg.delete()
         await message.reply_text(f"🎬 **{title}**", reply_markup=InlineKeyboardMarkup(keyboard), quote=True)
     
-    except Exception as e:
-        await msg.edit_text(f"⚠️ **Scan Error:** {e}")
+    except Exception:
+        # FALLBACK: If scanning fails, show buttons ANYWAY
+        await msg.delete()
+        fallback_buttons = [
+            [InlineKeyboardButton("🎬 1080p", callback_data="video_1080"), InlineKeyboardButton("🎬 720p", callback_data="video_720")],
+            [InlineKeyboardButton("🎬 360p", callback_data="video_360"), InlineKeyboardButton("🎵 Audio (MP3)", callback_data="audio_mp3")]
+        ]
+        await message.reply_text(
+            f"⚠️ **Scan Blocked, Force Mode Active!**\n\n👇 **Select Quality:**", 
+            reply_markup=InlineKeyboardMarkup(fallback_buttons), 
+            quote=True
+        )
 
 def run_sync_download(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl: return ydl.download([url])
@@ -152,38 +160,49 @@ async def callback(client, query):
         ydl_fmt = 'bestaudio/best'; ext = 'mp3'
     else:
         res = data.split("_")[1]
+        # Use simple format to avoid errors
         ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'; ext = 'mp4'
 
     final_path = f"{filename}.{ext}"
     thumb_path = f"{filename}.jpg"
 
-    # USE GOOGLEBOT SETTINGS FOR DOWNLOAD TOO
-    opts = {
-        'format': ydl_fmt,
-        'outtmpl': f'{filename}.%(ext)s',
-        'quiet': True, 
-        'noprogress': True, 
-        'logger': silent_logger,
-        'cookiefile': None,
-        'user_agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-        'extractor_args': {'youtube': {'player_client': ['android_creator']}},
-        'writethumbnail': True,
-        'concurrent_fragment_downloads': 5,
-        'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-    }
-    
-    if ext == "mp3": 
-        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
-    else:
-        opts['merge_output_format'] = 'mp4'
+    # Try clients in order
+    clients_to_try = ['android', 'ios', 'web', 'tv']
+    success = False
 
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(Mode: Googlebot)")
+        await status_msg.edit_text(f"📥 **DOWNLOADING...**")
         
-        await asyncio.to_thread(run_sync_download, opts, url)
-        
-        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
-            raise Exception("Blocked. Try again later.")
+        for client_name in clients_to_try:
+            try:
+                opts = {
+                    'format': ydl_fmt,
+                    'outtmpl': f'{filename}.%(ext)s',
+                    'quiet': True, 
+                    'noprogress': True, 
+                    'logger': silent_logger,
+                    'cookiefile': 'cookies.txt', 
+                    'extractor_args': {'youtube': {'player_client': [client_name]}},
+                    'writethumbnail': True,
+                    'concurrent_fragment_downloads': 5,
+                    'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
+                }
+                
+                if ext == "mp3": 
+                    opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
+                else:
+                    opts['merge_output_format'] = 'mp4'
+
+                await asyncio.to_thread(run_sync_download, opts, url)
+                
+                if os.path.exists(final_path) and os.path.getsize(final_path) > 0:
+                    success = True
+                    break 
+            except:
+                continue
+
+        if not success:
+            raise Exception("All clients blocked.")
 
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
@@ -198,3 +217,11 @@ async def callback(client, query):
     except Exception as e:
         await status_msg.edit_text(f"⚠️ Error: {e}")
     finally:
+        if os.path.exists(final_path):
+            os.remove(final_path)
+        if os.path.exists(thumb_path):
+            os.remove(thumb_path)
+
+if __name__ == '__main__':
+    app.start()
+    idle()
