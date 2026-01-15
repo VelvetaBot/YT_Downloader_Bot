@@ -23,7 +23,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v12.0 - Logger Fixed)"
+    return "✅ Bot is Running (v13.0 - Format Safe Mode)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -33,8 +33,7 @@ t = threading.Thread(target=run_web_server)
 t.daemon = True
 t.start()
 
-# --- 3. THE SILENCER (FIXED) ---
-# Added back 'debug', 'warning', 'error' to prevent the crash
+# --- 3. THE SILENCER (CRITICAL FIX) ---
 class UniversalFakeLogger:
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
@@ -76,7 +75,7 @@ async def start(client, message):
         "I can download videos **up to 2GB!** 🚀\n\n"
         "**How to use:**\n"
         "1️⃣ Send a YouTube link 🔗\n"
-        "2️⃣ I will list **ALL Available Qualities** (4K to 144p) ✨\n"
+        "2️⃣ I will list **ALL Available Qualities** ✨\n"
         "3️⃣ Select and Download! 📥"
     )
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
@@ -97,9 +96,8 @@ async def handle_link(client, message):
 
 # --- 8. SCAN & SHOW OPTIONS ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Scanning All Resolutions...**", quote=True)
+    msg = await message.reply_text("🔎 **Scanning Resolutions...**", quote=True)
     try:
-        # Using the Fixed Logger here
         opts = {
             'quiet': True, 'noprogress': True, 'logger': silent_logger, 
             'cookiefile': 'cookies.txt', 
@@ -110,13 +108,11 @@ async def show_options(message, url):
         title = info.get('title', 'Video')
         formats = info.get('formats', [])
 
-        # Filter Available Heights
         available_res = set()
         for f in formats:
             if f.get('vcodec') != 'none' and f.get('height'):
                 available_res.add(f['height'])
         
-        # Sort High to Low
         sorted_res = sorted(list(available_res), reverse=True)
         
         buttons_list = []
@@ -174,13 +170,11 @@ async def callback(client, query):
     if data == "warn_144":
         warning_text = (
             "⚠️ **Low Quality Warning (144p)**\n\n"
-            "Note: This video will be very blurry. "
-            "It is for saving data.\n\n"
-            "**Do you want to proceed?**"
+            "This video will be blurry. Proceed?\n"
         )
         buttons = [
-            [InlineKeyboardButton("✅ Yes, Download", callback_data="video_144")],
-            [InlineKeyboardButton("🔙 Go Back", callback_data="back_to_options")]
+            [InlineKeyboardButton("✅ Yes", callback_data="video_144")],
+            [InlineKeyboardButton("🔙 Back", callback_data="back_to_options")]
         ]
         await query.message.edit_text(warning_text, reply_markup=InlineKeyboardMarkup(buttons))
         return
@@ -198,8 +192,9 @@ async def callback(client, query):
         ydl_fmt = 'bestaudio/best'
         ext = 'mp3'
     else:
+        # THE FIX: Use '<=' instead of '='. This is MUCH safer.
         res = data.split("_")[1]
-        ydl_fmt = f'bestvideo[height={res}]+bestaudio/best[height={res}]/best'
+        ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'
         ext = 'mp4'
 
     opts = {
@@ -226,7 +221,8 @@ async def callback(client, query):
             if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
                 raise Exception("Empty File")
         except Exception as e:
-            await status_msg.edit_text(f"⚠️ **Optimization... Retrying...**")
+            # SAFETY FALLBACK: If specific quality fails, just get 'best'
+            await status_msg.edit_text(f"⚠️ **Optimizing Quality...**")
             opts['format'] = 'best'
             opts['cookiefile'] = None
             if 'extractor_args' in opts: del opts['extractor_args']
