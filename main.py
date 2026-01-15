@@ -23,7 +23,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v8.0 - Smart Scanner)"
+    return "✅ Bot is Running (v9.0 - Auto Fallback)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -106,40 +106,29 @@ async def show_options(message, url):
             'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         }
         
-        # EXTRACT INFO WITHOUT DOWNLOADING
         info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
         formats = info.get('formats', [])
 
-        # 1. FILTER AVAILABLE RESOLUTIONS
-        # We look at what resolutions actually exist in the video
         available_res = set()
         for f in formats:
-            # Check if it's a video file and has height info
             if f.get('vcodec') != 'none' and f.get('height'):
                 available_res.add(f['height'])
         
-        # 2. CREATE BUTTONS
         buttons_list = []
-        
-        # Sort resolutions high to low (e.g., 1080, 720, 480...)
         sorted_res = sorted(list(available_res), reverse=True)
         
-        # Keep only common qualities to avoid clutter (e.g. ignore 144p if 1080 exists)
-        # But ensure we show at least something
         display_res = []
         for r in sorted_res:
             if r in [2160, 1440, 1080, 720, 480, 360]:
                 display_res.append(r)
         
         if not display_res and sorted_res:
-            display_res.append(sorted_res[0]) # Add at least one if none matched
+            display_res.append(sorted_res[0]) 
 
         for res in display_res:
-            # Add Button: "🎬 1080p", "🎬 720p", etc.
             buttons_list.append(InlineKeyboardButton(f"🎬 {res}p", callback_data=f"video_{res}"))
         
-        # Organize buttons (2 per row)
         keyboard = []
         temp_row = []
         for btn in buttons_list:
@@ -150,7 +139,6 @@ async def show_options(message, url):
         if temp_row:
             keyboard.append(temp_row)
 
-        # 3. ADD AUDIO BUTTON (Always)
         keyboard.append([InlineKeyboardButton("🎵 Audio (MP3)", callback_data="audio_mp3")])
 
         await msg.delete()
@@ -172,7 +160,7 @@ def run_sync_info(opts, url):
 
 url_store = {}
 
-# --- HANDLE CALLBACKS ---
+# --- HANDLE CALLBACKS (WITH AUTO-FALLBACK) ---
 @app.on_callback_query()
 async def callback(client, query):
     data = query.data
@@ -190,15 +178,15 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
     filename = f"vid_{user_id}_{int(time.time())}"
     
-    # --- EXACT FORMAT SELECTION ---
+    # 1. SETUP INITIAL REQUEST
+    target_res = None
     if data == "audio_mp3":
         ydl_fmt = 'bestaudio/best'
         ext = 'mp3'
     else:
-        # User clicked a specific resolution (e.g. video_720)
-        res = data.split("_")[1]
-        # Request EXACT match for that resolution, fall back to 'best' if merge fails
-        ydl_fmt = f'bestvideo[height={res}]+bestaudio/best[height={res}]/best'
+        target_res = data.split("_")[1] # e.g. "1080"
+        # Try to get EXACT resolution first
+        ydl_fmt = f'bestvideo[height={target_res}]+bestaudio/best[height={target_res}]'
         ext = 'mp4'
 
     opts = {
@@ -211,33 +199,49 @@ async def callback(client, query):
         'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
     }
     
-    if ext == "mp4": 
-        opts['merge_output_format'] = 'mp4'
-    else: 
-        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
+    if ext == "mp4": opts['merge_output_format'] = 'mp4'
+    else: opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
 
     final_path = f"{filename}.{ext}"
     thumb_path = f"{filename}.jpg" 
 
     try:
-        await status_msg.edit_text("📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
+        await status_msg.edit_text(f"📥 **DOWNLOADING {target_res if target_res else 'Audio'}...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
         
-        # Download
-        await asyncio.to_thread(run_sync_download, opts, url)
-        
-        # Verify File (Auto-Retry if empty)
-        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
-             # Retry without cookies if failed (sometimes strict mode fails)
-             opts['cookiefile'] = None
-             if 'extractor_args' in opts: del opts['extractor_args']
-             # Fallback to generic 'best'
-             opts['format'] = 'best'
-             if 'merge_output_format' in opts: del opts['merge_output_format']
-             
-             await status_msg.edit_text("⚠️ **Specific format failed. Getting Best Available...**")
-             await asyncio.to_thread(run_sync_download, opts, url)
+        # --- DOWNLOAD ATTEMPT LOGIC ---
+        try:
+            # ATTEMPT 1: Strict Quality
+            await asyncio.to_thread(run_sync_download, opts, url)
+            
+            # Check if file exists and is not empty
+            if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+                raise Exception("Empty File")
 
-        # Upload
+        except Exception as e:
+            # ATTEMPT 2: AUTO-FALLBACK (If Exact Quality fails, get BEST available)
+            error_msg = str(e)
+            print(f"Download Failed: {error_msg}") # Log internal error
+            
+            await status_msg.edit_text(f"⚠️ **{target_res}p Failed. Getting Best Available Quality...**")
+            
+            # Change settings to "Best Video" (Fail-safe)
+            opts['format'] = 'bestvideo+bestaudio/best'
+            if 'merge_output_format' in opts: del opts['merge_output_format'] # Simplify
+            
+            # Disable cookies if they caused the block
+            opts['cookiefile'] = None 
+            if 'extractor_args' in opts: del opts['extractor_args']
+
+            # Retry Download
+            await asyncio.to_thread(run_sync_download, opts, url)
+            
+            # If still fails, try basic 'best' (single file)
+            if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+                 opts['format'] = 'best'
+                 await asyncio.to_thread(run_sync_download, opts, url)
+
+
+        # --- UPLOAD ---
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
         
@@ -261,5 +265,7 @@ async def callback(client, query):
 if __name__ == '__main__':
     print("✅ System Starting...")
     app.start()
+    print("✅ Bot Started & Connected to Telegram!")
+    idle()
     print("✅ Bot Started & Connected to Telegram!")
     idle()
