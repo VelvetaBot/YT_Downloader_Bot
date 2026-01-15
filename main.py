@@ -22,7 +22,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v26.0 - Creator Mode)"
+    return "✅ Bot is Running (v23.0 - Safe Android Mode)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -70,9 +70,12 @@ async def progress(current, total, message, start_time, status_text):
 @app.on_message(filters.command("start"))
 async def start(client, message):
     welcome_text = (
-        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n\n"
-        "**System Status:** Android Creator Mode 🎥\n"
-        "Using special access to bypass blocks."
+        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n"
+        "I can download videos **up to 2GB!** 🚀\n\n"
+        "**How to use:**\n"
+        "1️⃣ Send a YouTube link 🔗\n"
+        "2️⃣ Select Quality ✨\n"
+        "3️⃣ I will use safe mode to avoid errors! 📥"
     )
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -87,47 +90,36 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 7. SHOW OPTIONS (FORCE MODE) ---
+# --- 7. SHOW OPTIONS ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Scanning (Creator API)...**", quote=True)
+    msg = await message.reply_text("🔎 **Scanning...**", quote=True)
     
+    # Use Android Client WITHOUT Cookies (Safest Method)
+    opts = {
+        'quiet': True, 'noprogress': True, 'logger': silent_logger,
+        'extractor_args': {'youtube': {'player_client': ['android']}},
+    }
+
     try:
-        # THE SECRET WEAPON: 'android_creator' client
-        opts = {
-            'quiet': True, 
-            'noprogress': True, 
-            'logger': silent_logger,
-            'cookiefile': 'cookies.txt',
-            'extractor_args': {'youtube': {'player_client': ['android_creator']}},
-        }
         info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
 
-        resolutions = [2160, 1440, 1080, 720, 480, 360, 240, 144]
+        resolutions = [1080, 720, 480, 360]
         buttons_list = []
         for res in resolutions:
-            label = f"🎬 {res}p" if res not in [2160, 1440] else f"🎬 {'4K' if res==2160 else '2K'}"
-            data = "warn_144" if res == 144 else f"video_{res}"
-            buttons_list.append(InlineKeyboardButton(label, callback_data=data))
+            buttons_list.append(InlineKeyboardButton(f"🎬 {res}p", callback_data=f"video_{res}"))
         
+        # Add a "Best Quality" button as a backup
+        buttons_list.append(InlineKeyboardButton("🌟 Best Quality", callback_data="video_best"))
+
         keyboard = [buttons_list[i:i+2] for i in range(0, len(buttons_list), 2)]
         keyboard.append([InlineKeyboardButton("🎵 Audio (MP3)", callback_data="audio_mp3")])
 
         await msg.delete()
         await message.reply_text(f"🎬 **{title}**", reply_markup=InlineKeyboardMarkup(keyboard), quote=True)
     
-    except Exception:
-        # Fallback to Force Menu if scan fails
-        await msg.delete()
-        fallback_buttons = [
-            [InlineKeyboardButton("🎬 1080p", callback_data="video_1080"), InlineKeyboardButton("🎬 720p", callback_data="video_720")],
-            [InlineKeyboardButton("🎬 360p", callback_data="video_360"), InlineKeyboardButton("🎵 Audio (MP3)", callback_data="audio_mp3")]
-        ]
-        await message.reply_text(
-            f"⚠️ **Scan Blocked (Creator Mode). Force Active.**\nSelect Quality:", 
-            reply_markup=InlineKeyboardMarkup(fallback_buttons), 
-            quote=True
-        )
+    except Exception as e:
+        await msg.edit_text(f"⚠️ **Scan Error:** {e}\n\nMake sure cookies.txt is DELETED from GitHub.")
 
 def run_sync_download(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl: return ydl.download([url])
@@ -137,7 +129,7 @@ def run_sync_info(opts, url):
 
 url_store = {}
 
-# --- 8. DOWNLOAD HANDLER ---
+# --- 8. DOWNLOAD HANDLER (SAFE MODE) ---
 @app.on_callback_query()
 async def callback(client, query):
     data = query.data
@@ -147,61 +139,50 @@ async def callback(client, query):
     if not stored: return await query.answer("❌ Expired", show_alert=True)
     url = stored['url']
     
-    if data == "warn_144":
-        await query.message.edit_text("⚠️ **Confirm 144p?**", 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Yes", callback_data="video_144")]]))
-        return
-
     await query.message.delete()
     status_msg = await query.message.reply_text("⏳ **Initializing...**")
     filename = f"vid_{user_id}_{int(time.time())}"
 
+    # FORMAT LOGIC
     if data == "audio_mp3":
         ydl_fmt = 'bestaudio/best'; ext = 'mp3'
+    elif data == "video_best":
+        ydl_fmt = 'bestvideo+bestaudio/best'; ext = 'mp4'
     else:
+        # e.g., video_720
         res = data.split("_")[1]
+        # SAFE MODE: Try exact -> Fallback to best if failed
         ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'; ext = 'mp4'
 
     final_path = f"{filename}.{ext}"
     thumb_path = f"{filename}.jpg"
 
-    # STRATEGY: 1. Android Creator (Best) -> 2. iOS (Backup)
-    strategies = ['android_creator', 'ios']
-    success = False
-
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(Using Creator API)")
+        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(No Cookies Mode)")
         
-        for strat in strategies:
-            try:
-                opts = {
-                    'format': ydl_fmt,
-                    'outtmpl': f'{filename}.%(ext)s',
-                    'quiet': True, 
-                    'noprogress': True, 
-                    'logger': silent_logger,
-                    'cookiefile': 'cookies.txt', 
-                    'extractor_args': {'youtube': {'player_client': [strat]}},
-                    'writethumbnail': True,
-                    'concurrent_fragment_downloads': 5,
-                    'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-                }
-                
-                if ext == "mp3": 
-                    opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
-                else:
-                    opts['merge_output_format'] = 'mp4'
+        opts = {
+            'format': ydl_fmt,
+            'outtmpl': f'{filename}.%(ext)s',
+            'quiet': True, 'noprogress': True, 'logger': silent_logger,
+            'extractor_args': {'youtube': {'player_client': ['android']}},
+            'writethumbnail': True,
+            'concurrent_fragment_downloads': 5,
+            'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
+        }
+        
+        if ext == "mp3": 
+            opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
+        else:
+            opts['merge_output_format'] = 'mp4'
 
-                await asyncio.to_thread(run_sync_download, opts, url)
-                
-                if os.path.exists(final_path) and os.path.getsize(final_path) > 0:
-                    success = True
-                    break 
-            except:
-                continue
-
-        if not success:
-            raise Exception("Blocked. Try creating NEW cookies from a different account.")
+        await asyncio.to_thread(run_sync_download, opts, url)
+        
+        # FINAL CHECK: Did the file actually download?
+        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+            # Fallback to Simple Download if merge failed
+            opts['format'] = 'best'
+            if 'merge_output_format' in opts: del opts['merge_output_format']
+            await asyncio.to_thread(run_sync_download, opts, url)
 
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
