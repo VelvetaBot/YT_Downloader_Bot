@@ -23,7 +23,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v5.0 - Auto Retry Fix)"
+    return "✅ Bot is Running (v7.0 - Dynamic Buttons)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -75,8 +75,8 @@ async def start(client, message):
         "I can download videos **up to 2GB!** 🚀\n\n"
         "**How to use:**\n"
         "1️⃣ Send a YouTube link 🔗\n"
-        "2️⃣ Select Quality ✨\n"
-        "3️⃣ Wait for the magic! 📥"
+        "2️⃣ I will show ONLY available qualities ✨\n"
+        "3️⃣ Select and Download! 📥"
     )
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -94,32 +94,58 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- SHOW OPTIONS ---
+# --- SHOW OPTIONS (DYNAMIC BUTTONS) ---
 async def show_options(message, url):
+    msg = await message.reply_text("🔎 **Scanning Video Qualities...**", quote=True)
     try:
-        msg = await message.reply_text("🔎 **Checking Link...**", quote=True)
-    except:
-        return
-
-    try:
+        # Use Android client to get formats safely
         opts = {
             'quiet': True, 'noprogress': True, 
             'logger': silent_logger, 
-            'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'cookiefile': 'cookies.txt', 
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         }
         
+        # Get Info
         info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
+        formats = info.get('formats', [])
+
+        # 1. FIND AVAILABLE RESOLUTIONS
+        available_res = set()
+        for f in formats:
+            if f.get('vcodec') != 'none' and f.get('height'):
+                available_res.add(f['height'])
         
+        # 2. CREATE BUTTONS BASED ON WHAT IS FOUND
+        buttons_list = []
+        
+        # Check for standard qualities
+        targets = [1080, 720, 480, 360]
+        for res in targets:
+            if res in available_res:
+                buttons_list.append(InlineKeyboardButton(f"🎬 {res}p", callback_data=f"video_{res}"))
+        
+        # If no standard res found, add a generic "Best Video" button
+        if not buttons_list:
+            buttons_list.append(InlineKeyboardButton("🎬 Best Quality", callback_data="video_best"))
+
+        # Organize buttons (2 per row)
+        keyboard = []
+        temp_row = []
+        for btn in buttons_list:
+            temp_row.append(btn)
+            if len(temp_row) == 2:
+                keyboard.append(temp_row)
+                temp_row = []
+        if temp_row:
+            keyboard.append(temp_row)
+
+        # 3. ADD AUDIO BUTTON (Always Available)
+        keyboard.append([InlineKeyboardButton("🎵 Audio (MP3)", callback_data="audio_mp3")])
+
         await msg.delete()
-        
-        buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎥 1080p", callback_data="1080"), InlineKeyboardButton("🎥 720p", callback_data="720")],
-            [InlineKeyboardButton("🎥 360p", callback_data="360"), InlineKeyboardButton("🎵 Audio (MP3)", callback_data="mp3")]
-        ])
-        
-        await message.reply_text(f"🎬 **{title}**\n\n👇 **Select Quality:**", reply_markup=buttons, quote=True)
+        await message.reply_text(f"🎬 **{title}**\n\n👇 **Available Qualities:**", reply_markup=InlineKeyboardMarkup(keyboard), quote=True)
         
     except Exception as e:
         await msg.edit_text(f"⚠️ Error: {e}")
@@ -151,28 +177,33 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
     filename = f"vid_{user_id}_{int(time.time())}"
     
-    # FORMAT SELECTION
-    if data == "mp3": 
-        ydl_fmt = 'bestaudio/best'; ext = 'mp3'
-    elif data == "1080": 
-        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'; ext = 'mp4'
-    elif data == "720": 
-        ydl_fmt = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'; ext = 'mp4'
-    else: 
-        ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best'; ext = 'mp4'
+    # --- DYNAMIC FORMAT SELECTION ---
+    if data == "audio_mp3":
+        ydl_fmt = 'bestaudio/best'
+        ext = 'mp3'
+    elif data == "video_best":
+        ydl_fmt = 'bestvideo+bestaudio/best'
+        ext = 'mp4'
+    else:
+        # Extract resolution number (e.g., "video_720" -> "720")
+        res = data.split("_")[1]
+        ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'
+        ext = 'mp4'
 
     opts = {
         'format': ydl_fmt, 
         'outtmpl': f'{filename}.%(ext)s',
         'quiet': True, 'noprogress': True, 'logger': silent_logger, 
-        'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'cookiefile': 'cookies.txt', 
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}}, 
         'writethumbnail': True, 'concurrent_fragment_downloads': 5, 
         'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
     }
     
-    if data != "mp3": opts['merge_output_format'] = 'mp4'
-    else: opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
+    if ext == "mp4": 
+        opts['merge_output_format'] = 'mp4'
+    else: 
+        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
 
     final_path = f"{filename}.{ext}"
     thumb_path = f"{filename}.jpg" 
@@ -180,25 +211,18 @@ async def callback(client, query):
     try:
         await status_msg.edit_text("📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
         
-        # --- AUTO-RETRY LOGIC ---
-        try:
-            # Attempt 1: Try the requested quality
-            await asyncio.to_thread(run_sync_download, opts, url)
-            
-            # Check if file is empty (The main issue)
-            if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
-                raise Exception("Empty File")
-                
-        except Exception:
-            # Attempt 2: Fallback to 'best' (Simpler download)
-            await status_msg.edit_text("⚠️ **High Quality Failed. Trying Normal Quality...**")
-            opts['format'] = 'best'
-            # Remove complex post-processors to avoid merge errors
-            if 'merge_output_format' in opts: del opts['merge_output_format']
-            
-            await asyncio.to_thread(run_sync_download, opts, url)
+        # Download
+        await asyncio.to_thread(run_sync_download, opts, url)
+        
+        # Verify File
+        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+             # Retry without cookies/android args if failed
+             opts['cookiefile'] = None
+             if 'extractor_args' in opts: del opts['extractor_args']
+             await status_msg.edit_text("⚠️ **Retrying Alternative Method...**")
+             await asyncio.to_thread(run_sync_download, opts, url)
 
-        # --- UPLOAD ---
+        # Upload
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
         
@@ -206,7 +230,7 @@ async def callback(client, query):
         thumb = thumb_path if os.path.exists(thumb_path) else None
         caption_text = "✅ **Download Via @VelvetaYTDownloaderBot**"
 
-        if data == "mp3":
+        if ext == "mp3":
             await app.send_audio(query.message.chat.id, audio=final_path, thumb=thumb, caption=caption_text, reply_to_message_id=original_msg_id, reply_markup=donate_btn, progress=progress, progress_args=(status_msg, start_time, "☁️ **UPLOADING AUDIO...**"))
         else:
             await app.send_video(query.message.chat.id, video=final_path, thumb=thumb, caption=caption_text, supports_streaming=True, reply_to_message_id=original_msg_id, reply_markup=donate_btn, progress=progress, progress_args=(status_msg, start_time, "☁️ **UPLOADING VIDEO...**"))
