@@ -242,3 +242,4 @@ if __name__ == '__main__':
     keep_alive()
     print("✅ Bot Started (Syntax Fixed)")
     app.run()
+
