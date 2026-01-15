@@ -22,7 +22,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v25.0 - Scan Bypass)"
+    return "✅ Bot is Running (v26.0 - Creator Mode)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -71,8 +71,8 @@ async def progress(current, total, message, start_time, status_text):
 async def start(client, message):
     welcome_text = (
         "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n\n"
-        "**System Status:** Scan Bypass Active 🛡️\n"
-        "I will force download even if YouTube blocks scanning!"
+        "**System Status:** Android Creator Mode 🎥\n"
+        "Using special access to bypass blocks."
     )
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -87,18 +87,18 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 7. SHOW OPTIONS (WITH FALLBACK) ---
+# --- 7. SHOW OPTIONS (FORCE MODE) ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Scanning Link...**", quote=True)
+    msg = await message.reply_text("🔎 **Scanning (Creator API)...**", quote=True)
     
     try:
-        # Try to scan normally first
+        # THE SECRET WEAPON: 'android_creator' client
         opts = {
             'quiet': True, 
             'noprogress': True, 
             'logger': silent_logger,
             'cookiefile': 'cookies.txt',
-            'extractor_args': {'youtube': {'player_client': ['android']}},
+            'extractor_args': {'youtube': {'player_client': ['android_creator']}},
         }
         info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
@@ -117,14 +117,14 @@ async def show_options(message, url):
         await message.reply_text(f"🎬 **{title}**", reply_markup=InlineKeyboardMarkup(keyboard), quote=True)
     
     except Exception:
-        # FALLBACK: If scanning fails, show buttons ANYWAY
+        # Fallback to Force Menu if scan fails
         await msg.delete()
         fallback_buttons = [
             [InlineKeyboardButton("🎬 1080p", callback_data="video_1080"), InlineKeyboardButton("🎬 720p", callback_data="video_720")],
             [InlineKeyboardButton("🎬 360p", callback_data="video_360"), InlineKeyboardButton("🎵 Audio (MP3)", callback_data="audio_mp3")]
         ]
         await message.reply_text(
-            f"⚠️ **Scan Blocked, Force Mode Active!**\n\n👇 **Select Quality:**", 
+            f"⚠️ **Scan Blocked (Creator Mode). Force Active.**\nSelect Quality:", 
             reply_markup=InlineKeyboardMarkup(fallback_buttons), 
             quote=True
         )
@@ -160,20 +160,19 @@ async def callback(client, query):
         ydl_fmt = 'bestaudio/best'; ext = 'mp3'
     else:
         res = data.split("_")[1]
-        # Use simple format to avoid errors
         ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'; ext = 'mp4'
 
     final_path = f"{filename}.{ext}"
     thumb_path = f"{filename}.jpg"
 
-    # Try clients in order
-    clients_to_try = ['android', 'ios', 'web', 'tv']
+    # STRATEGY: 1. Android Creator (Best) -> 2. iOS (Backup)
+    strategies = ['android_creator', 'ios']
     success = False
 
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING...**")
+        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(Using Creator API)")
         
-        for client_name in clients_to_try:
+        for strat in strategies:
             try:
                 opts = {
                     'format': ydl_fmt,
@@ -182,7 +181,7 @@ async def callback(client, query):
                     'noprogress': True, 
                     'logger': silent_logger,
                     'cookiefile': 'cookies.txt', 
-                    'extractor_args': {'youtube': {'player_client': [client_name]}},
+                    'extractor_args': {'youtube': {'player_client': [strat]}},
                     'writethumbnail': True,
                     'concurrent_fragment_downloads': 5,
                     'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
@@ -202,7 +201,7 @@ async def callback(client, query):
                 continue
 
         if not success:
-            raise Exception("All clients blocked.")
+            raise Exception("Blocked. Try creating NEW cookies from a different account.")
 
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
@@ -217,10 +216,8 @@ async def callback(client, query):
     except Exception as e:
         await status_msg.edit_text(f"⚠️ Error: {e}")
     finally:
-        if os.path.exists(final_path):
-            os.remove(final_path)
-        if os.path.exists(thumb_path):
-            os.remove(thumb_path)
+        if os.path.exists(final_path): os.remove(final_path)
+        if os.path.exists(thumb_path): os.remove(thumb_path)
 
 if __name__ == '__main__':
     app.start()
