@@ -209,3 +209,6 @@ if __name__ == '__main__':
     app.start()
     print("✅ Bot Started & Connected to Telegram!")
     idle()
+    print("✅ Bot Started & Connected to Telegram!")
+    idle()
+
