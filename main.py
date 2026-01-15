@@ -26,6 +26,7 @@ sys.stderr = silent_logger
 # --- 2. CONFIGURATION ---
 API_ID = 11253846                   
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
+# ✅ NEW TOKEN UPDATED HERE
 BOT_TOKEN = "8034075115:AAG1mS-FAopJN3TykUBhMWtE6nQOlhBsKNk"
 
 # LINKS
@@ -33,7 +34,6 @@ CHANNEL_LINK = "https://t.me/Velvetabots"
 DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"   
 
 # --- 3. SETUP CLIENT ---
-# ipv6=True might help with YouTube blocking in some server regions
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=True)
 
 # --- 4. RELIABLE PROGRESS BAR ---
@@ -64,7 +64,7 @@ async def group_moderation(client, message):
         if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR]:
             return # Admin message -> Do nothing (Allow)
     except:
-        pass # If bot fails to check admin, treat as normal user
+        pass 
 
     text = message.text.lower()
     
@@ -76,7 +76,6 @@ async def group_moderation(client, message):
         "tiktok.com"                # TikTok
     ]
 
-    # Check if message contains ANY allowed link
     has_allowed_link = any(domain in text for domain in allowed_domains)
 
     # 3. LOGIC: If NO allowed link is found -> DELETE
@@ -84,10 +83,9 @@ async def group_moderation(client, message):
         try:
             await message.delete()
         except:
-            pass # Bot might not have delete permissions
+            pass 
 
-# --- 6. HELPER: THREADED DOWNLOAD (Fixes Lag/Blocking) ---
-# This runs the download in a separate thread so the bot doesn't freeze
+# --- 6. HELPER: THREADED DOWNLOAD ---
 def run_sync_download(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.download([url])
@@ -116,7 +114,6 @@ async def handle_link(client, message):
     url = message.text
     user_id = message.from_user.id
     
-    # Only process YouTube links (Ignore Insta/Twitter/TikTok here, so other bots handle them)
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
@@ -138,7 +135,6 @@ async def show_options(message, url):
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         }
         
-        # Run in thread (Non-blocking)
         info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
         
@@ -174,7 +170,6 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
     filename = f"vid_{user_id}_{int(time.time())}"
     
-    # FLEXIBLE FORMATS to prevent "Format not available" error
     if data == "mp3":
         ydl_fmt = 'bestaudio/best'; ext = 'mp3'
     elif data == "1080":
@@ -192,8 +187,6 @@ async def callback(client, query):
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'writethumbnail': True, 
         'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-        
-        # Critical for stability
         'concurrent_fragment_downloads': 5, 
         'retries': 10,
         'fragment_retries': 10,
@@ -210,7 +203,6 @@ async def callback(client, query):
     try:
         await status_msg.edit_text("📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
         
-        # Run Download in Thread (Non-blocking)
         await asyncio.to_thread(run_sync_download, opts, url)
 
         await status_msg.edit_text("☁️ **UPLOADING...**\n(This supports up to 2GB!)")
@@ -219,12 +211,15 @@ async def callback(client, query):
         donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate / Support", url=DONATE_LINK)]])
         thumb = thumb_path if os.path.exists(thumb_path) else None
 
+        # ✅ NEW CAPTION UPDATED HERE
+        caption_text = "✅ **Download Via @VelvetaYTDownloaderBot**"
+
         if data == "mp3":
             await app.send_audio(
                 query.message.chat.id, 
                 audio=final_path, 
                 thumb=thumb,
-                caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", 
+                caption=caption_text, 
                 reply_to_message_id=original_msg_id, 
                 reply_markup=donate_btn,
                 progress=progress, 
@@ -235,7 +230,7 @@ async def callback(client, query):
                 query.message.chat.id, 
                 video=final_path, 
                 thumb=thumb,
-                caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", 
+                caption=caption_text, 
                 supports_streaming=True, 
                 reply_to_message_id=original_msg_id, 
                 reply_markup=donate_btn,
@@ -254,5 +249,5 @@ async def callback(client, query):
 
 if __name__ == '__main__':
     keep_alive()
-    print("✅ Bot Started (Strict Mode + Async Fix)")
+    print("✅ Bot Started (New Token + New Caption)")
     app.run()
