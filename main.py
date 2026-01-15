@@ -4,6 +4,7 @@ import asyncio
 import time
 import logging
 import threading
+import random
 from flask import Flask
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -23,7 +24,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v16.0 - Multi-Disguise Mode)"
+    return "✅ Bot is Running (v17.0 - Mobile API Mode)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -75,8 +76,8 @@ async def start(client, message):
         "I can download videos **up to 2GB!** 🚀\n\n"
         "**How to use:**\n"
         "1️⃣ Send a YouTube link 🔗\n"
-        "2️⃣ I will use **Anti-Block Technology** 🛡️\n"
-        "3️⃣ Select and Download! 📥"
+        "2️⃣ Select Quality (4K to 144p) ✨\n"
+        "3️⃣ I will handle the rest! 📥"
     )
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -94,43 +95,22 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 8. SHOW OPTIONS (MULTI-CLIENT TRY) ---
+# --- 8. SHOW OPTIONS (Mobile API Strategy) ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Unlocking Video...**", quote=True)
+    msg = await message.reply_text("🔎 **Analyzing Link...**", quote=True)
     
-    # We define multiple clients to try if one gets blocked
-    clients_to_try = [
-        ['android'],       # Attempt 1: Android
-        ['ios'],           # Attempt 2: iPhone
-        ['web'],           # Attempt 3: Web
-        ['tv_embedded']    # Attempt 4: TV (Very strong)
-    ]
+    # Strategy: Use pure 'android' client. No 'web', no 'ios'.
+    # This often avoids the "Sign In" pop-up.
+    opts = {
+        'quiet': True, 'noprogress': True, 'logger': silent_logger,
+        'extractor_args': {'youtube': {'player_client': ['android']}},
+    }
     
-    info = None
-    last_error = ""
-
-    # Try each client until one works
-    for client_type in clients_to_try:
-        try:
-            opts = {
-                'quiet': True, 'noprogress': True, 'logger': silent_logger,
-                # NO COOKIES (To avoid Geo-Block)
-                'extractor_args': {'youtube': {'player_client': client_type}},
-            }
-            info = await asyncio.to_thread(run_sync_info, opts, url)
-            if info: break # If successful, stop trying
-        except Exception as e:
-            last_error = str(e)
-            continue
-
-    if not info:
-        await msg.edit_text(f"⚠️ **All bypass methods failed.**\nYouTube is strictly blocking the server IP.\nError: {last_error}")
-        return
-
     try:
+        info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
+
         resolutions = [2160, 1440, 1080, 720, 480, 360, 240, 144]
-        
         buttons_list = []
         for res in resolutions:
             if res == 2160: label = "🎬 4K (2160p)"
@@ -161,7 +141,7 @@ async def show_options(message, url):
             quote=True
         )
     except Exception as e:
-        await msg.edit_text(f"⚠️ Error: {e}")
+        await msg.edit_text(f"⚠️ **Connection Error:** {e}\n\n*Fix:* Please ensure 'cookies.txt' is DELETED from GitHub. Using cookies on a cloud server triggers this block.")
 
 # --- HELPERS ---
 def run_sync_download(opts, url):
@@ -187,7 +167,7 @@ async def callback(client, query):
     original_msg_id = stored_data['msg_id']
 
     if data == "warn_144":
-        warning_text = ("⚠️ **144p Warning**\nVery blurry. Confirm?")
+        warning_text = ("⚠️ **144p Warning**\nVideo will be blurry. Proceed?")
         buttons = [[InlineKeyboardButton("✅ Yes", callback_data="video_144")], [InlineKeyboardButton("🔙 Back", callback_data="back_to_options")]]
         await query.message.edit_text(warning_text, reply_markup=InlineKeyboardMarkup(buttons))
         return
@@ -207,41 +187,32 @@ async def callback(client, query):
         res = data.split("_")[1]; display_res = f"{res}p"
         ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'; ext = 'mp4'
 
-    # --- ROBUST DOWNLOAD ATTEMPT ---
-    # We try multiple clients again for the download phase
-    clients_to_try = [['android'], ['ios'], ['tv_embedded']]
+    # --- ANDROID API MODE ---
+    # This configuration mimics the official Android app to bypass blocks.
+    opts = {
+        'format': ydl_fmt, 
+        'outtmpl': f'{filename}.%(ext)s',
+        'quiet': True, 'noprogress': True, 'logger': silent_logger, 
+        # CRITICAL: Pure Android Mode, NO Cookies
+        'extractor_args': {'youtube': {'player_client': ['android']}},
+        'writethumbnail': True, 'concurrent_fragment_downloads': 5, 
+        'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
+    }
     
+    if ext == "mp4": opts['merge_output_format'] = 'mp4'
+    else: opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
+
     final_path = f"{filename}.{ext}"
     thumb_path = f"{filename}.jpg" 
-    success = False
 
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING {display_res}...**\n(Bypassing blocks...)\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
+        await status_msg.edit_text(f"📥 **DOWNLOADING {display_res}...**\n(Using Android API...)\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
         
-        for client_type in clients_to_try:
-            try:
-                opts = {
-                    'format': ydl_fmt, 
-                    'outtmpl': f'{filename}.%(ext)s',
-                    'quiet': True, 'noprogress': True, 'logger': silent_logger, 
-                    # NO COOKIES
-                    'extractor_args': {'youtube': {'player_client': client_type}},
-                    'writethumbnail': True, 'concurrent_fragment_downloads': 5, 
-                    'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-                }
-                if ext == "mp4": opts['merge_output_format'] = 'mp4'
-                else: opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
-                
-                await asyncio.to_thread(run_sync_download, opts, url)
-                
-                if os.path.exists(final_path) and os.path.getsize(final_path) > 0:
-                    success = True
-                    break # It worked!
-            except:
-                continue # Try next client
-
-        if not success:
-            raise Exception("Failed to bypass YouTube block.")
+        await asyncio.to_thread(run_sync_download, opts, url)
+        
+        # Verify file
+        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+            raise Exception("Download Failed (Empty File)")
 
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
@@ -258,7 +229,7 @@ async def callback(client, query):
         await status_msg.delete()
 
     except Exception as e:
-        await status_msg.edit_text(f"⚠️ Error: {e}\nTry deleting cookies.txt from GitHub.")
+        await status_msg.edit_text(f"⚠️ **YouTube Blocked IP**\n\nYouTube is asking for a Sign-In. This happens because the server (Render) is flagged.\n\n*Error Detail:* {e}")
     finally:
         if os.path.exists(final_path): os.remove(final_path)
         if os.path.exists(thumb_path): os.remove(thumb_path)
