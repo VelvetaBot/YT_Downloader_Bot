@@ -23,7 +23,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v7.0 - Dynamic Buttons)"
+    return "✅ Bot is Running (v8.0 - Smart Scanner)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -75,7 +75,7 @@ async def start(client, message):
         "I can download videos **up to 2GB!** 🚀\n\n"
         "**How to use:**\n"
         "1️⃣ Send a YouTube link 🔗\n"
-        "2️⃣ I will show ONLY available qualities ✨\n"
+        "2️⃣ I will SCAN available qualities ✨\n"
         "3️⃣ Select and Download! 📥"
     )
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
@@ -94,11 +94,11 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- SHOW OPTIONS (DYNAMIC BUTTONS) ---
+# --- SHOW OPTIONS (SMART SCANNER) ---
 async def show_options(message, url):
     msg = await message.reply_text("🔎 **Scanning Video Qualities...**", quote=True)
     try:
-        # Use Android client to get formats safely
+        # Use Android client to see all formats
         opts = {
             'quiet': True, 'noprogress': True, 
             'logger': silent_logger, 
@@ -106,30 +106,39 @@ async def show_options(message, url):
             'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         }
         
-        # Get Info
+        # EXTRACT INFO WITHOUT DOWNLOADING
         info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
         formats = info.get('formats', [])
 
-        # 1. FIND AVAILABLE RESOLUTIONS
+        # 1. FILTER AVAILABLE RESOLUTIONS
+        # We look at what resolutions actually exist in the video
         available_res = set()
         for f in formats:
+            # Check if it's a video file and has height info
             if f.get('vcodec') != 'none' and f.get('height'):
                 available_res.add(f['height'])
         
-        # 2. CREATE BUTTONS BASED ON WHAT IS FOUND
+        # 2. CREATE BUTTONS
         buttons_list = []
         
-        # Check for standard qualities
-        targets = [1080, 720, 480, 360]
-        for res in targets:
-            if res in available_res:
-                buttons_list.append(InlineKeyboardButton(f"🎬 {res}p", callback_data=f"video_{res}"))
+        # Sort resolutions high to low (e.g., 1080, 720, 480...)
+        sorted_res = sorted(list(available_res), reverse=True)
         
-        # If no standard res found, add a generic "Best Video" button
-        if not buttons_list:
-            buttons_list.append(InlineKeyboardButton("🎬 Best Quality", callback_data="video_best"))
+        # Keep only common qualities to avoid clutter (e.g. ignore 144p if 1080 exists)
+        # But ensure we show at least something
+        display_res = []
+        for r in sorted_res:
+            if r in [2160, 1440, 1080, 720, 480, 360]:
+                display_res.append(r)
+        
+        if not display_res and sorted_res:
+            display_res.append(sorted_res[0]) # Add at least one if none matched
 
+        for res in display_res:
+            # Add Button: "🎬 1080p", "🎬 720p", etc.
+            buttons_list.append(InlineKeyboardButton(f"🎬 {res}p", callback_data=f"video_{res}"))
+        
         # Organize buttons (2 per row)
         keyboard = []
         temp_row = []
@@ -141,11 +150,15 @@ async def show_options(message, url):
         if temp_row:
             keyboard.append(temp_row)
 
-        # 3. ADD AUDIO BUTTON (Always Available)
+        # 3. ADD AUDIO BUTTON (Always)
         keyboard.append([InlineKeyboardButton("🎵 Audio (MP3)", callback_data="audio_mp3")])
 
         await msg.delete()
-        await message.reply_text(f"🎬 **{title}**\n\n👇 **Available Qualities:**", reply_markup=InlineKeyboardMarkup(keyboard), quote=True)
+        await message.reply_text(
+            f"🎬 **{title}**\n\n👇 **Select Quality:**\n(I only show what is available!)", 
+            reply_markup=InlineKeyboardMarkup(keyboard), 
+            quote=True
+        )
         
     except Exception as e:
         await msg.edit_text(f"⚠️ Error: {e}")
@@ -177,17 +190,15 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
     filename = f"vid_{user_id}_{int(time.time())}"
     
-    # --- DYNAMIC FORMAT SELECTION ---
+    # --- EXACT FORMAT SELECTION ---
     if data == "audio_mp3":
         ydl_fmt = 'bestaudio/best'
         ext = 'mp3'
-    elif data == "video_best":
-        ydl_fmt = 'bestvideo+bestaudio/best'
-        ext = 'mp4'
     else:
-        # Extract resolution number (e.g., "video_720" -> "720")
+        # User clicked a specific resolution (e.g. video_720)
         res = data.split("_")[1]
-        ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'
+        # Request EXACT match for that resolution, fall back to 'best' if merge fails
+        ydl_fmt = f'bestvideo[height={res}]+bestaudio/best[height={res}]/best'
         ext = 'mp4'
 
     opts = {
@@ -214,12 +225,16 @@ async def callback(client, query):
         # Download
         await asyncio.to_thread(run_sync_download, opts, url)
         
-        # Verify File
+        # Verify File (Auto-Retry if empty)
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
-             # Retry without cookies/android args if failed
+             # Retry without cookies if failed (sometimes strict mode fails)
              opts['cookiefile'] = None
              if 'extractor_args' in opts: del opts['extractor_args']
-             await status_msg.edit_text("⚠️ **Retrying Alternative Method...**")
+             # Fallback to generic 'best'
+             opts['format'] = 'best'
+             if 'merge_output_format' in opts: del opts['merge_output_format']
+             
+             await status_msg.edit_text("⚠️ **Specific format failed. Getting Best Available...**")
              await asyncio.to_thread(run_sync_download, opts, url)
 
         # Upload
