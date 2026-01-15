@@ -4,7 +4,7 @@ import asyncio
 import time
 import logging
 import threading
-import random
+import re
 from flask import Flask
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -24,7 +24,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v17.0 - Mobile API Mode)"
+    return "✅ Bot is Running (v18.0 - OAuth2 Fix)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -34,18 +34,54 @@ t = threading.Thread(target=run_web_server)
 t.daemon = True
 t.start()
 
-# --- 3. THE SILENCER ---
-class UniversalFakeLogger:
+# --- 3. SMART LOGGER (CAPTURES AUTH CODE) ---
+class OAuthLogger:
+    def __init__(self, client, user_id, status_msg):
+        self.client = client
+        self.user_id = user_id
+        self.status_msg = status_msg
+        self.auth_sent = False
+
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
     def isatty(self): return False
-    def debug(self, *args, **kwargs): pass
-    def warning(self, *args, **kwargs): pass
-    def error(self, *args, **kwargs): pass
-    def info(self, *args, **kwargs): pass
-    def critical(self, *args, **kwargs): pass
+    
+    def debug(self, msg): 
+        self.check_auth(msg)
+        
+    def info(self, msg): 
+        self.check_auth(msg)
+        
+    def warning(self, msg): 
+        self.check_auth(msg)
+        
+    def error(self, msg): 
+        pass
 
-silent_logger = UniversalFakeLogger()
+    def check_auth(self, msg):
+        # Look for the Google Auth message in logs
+        if "google.com/device" in msg and not self.auth_sent:
+            self.auth_sent = True
+            try:
+                # Extract code using Regex
+                code_match = re.search(r'code ([A-Z0-9-]+)', msg)
+                if code_match:
+                    code = code_match.group(1)
+                    # Send alert to user
+                    text = (
+                        f"⚠️ **YOUTUBE LOGIN REQUIRED** ⚠️\n\n"
+                        f"YouTube blocked the server IP. Please authorize it manually:\n"
+                        f"1️⃣ Open: [google.com/device](https://www.google.com/device)\n"
+                        f"2️⃣ Enter Code: `{code}`\n\n"
+                        f"⏳ **Waiting for you to authorize...**"
+                    )
+                    # We use a trick to run async function from sync logger
+                    asyncio.run_coroutine_threadsafe(
+                        self.status_msg.edit_text(text, disable_web_page_preview=True),
+                        self.client.loop
+                    )
+            except:
+                pass
 
 # --- 4. SETUP CLIENT ---
 logging.basicConfig(level=logging.INFO)
@@ -77,7 +113,7 @@ async def start(client, message):
         "**How to use:**\n"
         "1️⃣ Send a YouTube link 🔗\n"
         "2️⃣ Select Quality (4K to 144p) ✨\n"
-        "3️⃣ I will handle the rest! 📥"
+        "3️⃣ If YouTube asks for Login, I will give you a code! 🔐"
     )
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -95,18 +131,15 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 8. SHOW OPTIONS (Mobile API Strategy) ---
+# --- 8. SHOW OPTIONS ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Analyzing Link...**", quote=True)
-    
-    # Strategy: Use pure 'android' client. No 'web', no 'ios'.
-    # This often avoids the "Sign In" pop-up.
-    opts = {
-        'quiet': True, 'noprogress': True, 'logger': silent_logger,
-        'extractor_args': {'youtube': {'player_client': ['android']}},
-    }
-    
+    msg = await message.reply_text("🔎 **Scanning Options...**", quote=True)
     try:
+        # Use simple check first
+        opts = {
+            'quiet': True, 'noprogress': True,
+            'extractor_args': {'youtube': {'player_client': ['android']}},
+        }
         info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
 
@@ -141,7 +174,7 @@ async def show_options(message, url):
             quote=True
         )
     except Exception as e:
-        await msg.edit_text(f"⚠️ **Connection Error:** {e}\n\n*Fix:* Please ensure 'cookies.txt' is DELETED from GitHub. Using cookies on a cloud server triggers this block.")
+        await msg.edit_text(f"⚠️ **Error:** {e}\n\nNOTE: If you have cookies.txt in GitHub, PLEASE DELETE IT.")
 
 # --- HELPERS ---
 def run_sync_download(opts, url):
@@ -187,14 +220,17 @@ async def callback(client, query):
         res = data.split("_")[1]; display_res = f"{res}p"
         ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'; ext = 'mp4'
 
-    # --- ANDROID API MODE ---
-    # This configuration mimics the official Android app to bypass blocks.
+    # --- OAUTH2 MODE (THE ULTIMATE FIX) ---
+    # We pass 'username': 'oauth2' to make yt-dlp ask for login if blocked.
+    # The custom logger will catch the code and send it to you.
+    custom_logger = OAuthLogger(app, user_id, status_msg)
+    
     opts = {
         'format': ydl_fmt, 
         'outtmpl': f'{filename}.%(ext)s',
-        'quiet': True, 'noprogress': True, 'logger': silent_logger, 
-        # CRITICAL: Pure Android Mode, NO Cookies
-        'extractor_args': {'youtube': {'player_client': ['android']}},
+        'quiet': False, 'noprogress': True, 
+        'logger': custom_logger,  # <--- LOGGER CONNECTED HERE
+        'username': 'oauth2',     # <--- TRIGGERS GOOGLE LOGIN IF BLOCKED
         'writethumbnail': True, 'concurrent_fragment_downloads': 5, 
         'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
     }
@@ -206,13 +242,12 @@ async def callback(client, query):
     thumb_path = f"{filename}.jpg" 
 
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING {display_res}...**\n(Using Android API...)\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
+        await status_msg.edit_text(f"📥 **DOWNLOADING {display_res}...**\n(If it gets stuck, check for a Login Code below!)")
         
         await asyncio.to_thread(run_sync_download, opts, url)
         
-        # Verify file
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
-            raise Exception("Download Failed (Empty File)")
+            raise Exception("Download Failed")
 
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
@@ -229,7 +264,10 @@ async def callback(client, query):
         await status_msg.delete()
 
     except Exception as e:
-        await status_msg.edit_text(f"⚠️ **YouTube Blocked IP**\n\nYouTube is asking for a Sign-In. This happens because the server (Render) is flagged.\n\n*Error Detail:* {e}")
+        if "Sign in" in str(e):
+             await status_msg.edit_text("⚠️ **Login Timeout:** You didn't enter the code in time. Try again.")
+        else:
+             await status_msg.edit_text(f"⚠️ Error: {e}")
     finally:
         if os.path.exists(final_path): os.remove(final_path)
         if os.path.exists(thumb_path): os.remove(thumb_path)
