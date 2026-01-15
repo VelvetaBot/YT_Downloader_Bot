@@ -190,7 +190,7 @@ async def callback(client, query):
                 query.message.chat.id, 
                 audio=final_path, 
                 thumb=thumb,
-                caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", 
+                caption="✅ **Downloaded via @VelvetaYTDownloaderBot**", 
                 reply_to_message_id=original_msg_id, 
                 reply_markup=donate_btn,
                 progress=progress, 
@@ -201,7 +201,7 @@ async def callback(client, query):
                 query.message.chat.id, 
                 video=final_path, 
                 thumb=thumb,
-                caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", 
+                caption="✅ **Downloaded via @VelvetaYTDownloaderBot**", 
                 supports_streaming=True, 
                 reply_to_message_id=original_msg_id, 
                 reply_markup=donate_btn,
@@ -222,4 +222,5 @@ if __name__ == '__main__':
     keep_alive()
     print("✅ Bot Started (Start=Join, Finish=Donate)")
     app.run()
+
 
