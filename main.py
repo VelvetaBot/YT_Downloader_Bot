@@ -23,7 +23,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v4.0 - Format Fix)"
+    return "✅ Bot is Running (v5.0 - Auto Retry Fix)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -151,20 +151,15 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
     filename = f"vid_{user_id}_{int(time.time())}"
     
-    # --- BULLETPROOF FORMAT SELECTOR ---
-    # We added '/best' at the end. If 1080p fails, it grabs ANY best video.
+    # FORMAT SELECTION
     if data == "mp3": 
-        ydl_fmt = 'bestaudio/best'
-        ext = 'mp3'
+        ydl_fmt = 'bestaudio/best'; ext = 'mp3'
     elif data == "1080": 
-        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
-        ext = 'mp4'
+        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'; ext = 'mp4'
     elif data == "720": 
-        ydl_fmt = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
-        ext = 'mp4'
+        ydl_fmt = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'; ext = 'mp4'
     else: 
-        ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best'
-        ext = 'mp4'
+        ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best'; ext = 'mp4'
 
     opts = {
         'format': ydl_fmt, 
@@ -176,18 +171,34 @@ async def callback(client, query):
         'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
     }
     
-    if data != "mp3": 
-        # Force conversion to MP4 if the download was WebM
-        opts['merge_output_format'] = 'mp4'
-    else: 
-        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
+    if data != "mp3": opts['merge_output_format'] = 'mp4'
+    else: opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
 
     final_path = f"{filename}.{ext}"
     thumb_path = f"{filename}.jpg" 
 
     try:
         await status_msg.edit_text("📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
-        await asyncio.to_thread(run_sync_download, opts, url)
+        
+        # --- AUTO-RETRY LOGIC ---
+        try:
+            # Attempt 1: Try the requested quality
+            await asyncio.to_thread(run_sync_download, opts, url)
+            
+            # Check if file is empty (The main issue)
+            if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+                raise Exception("Empty File")
+                
+        except Exception:
+            # Attempt 2: Fallback to 'best' (Simpler download)
+            await status_msg.edit_text("⚠️ **High Quality Failed. Trying Normal Quality...**")
+            opts['format'] = 'best'
+            # Remove complex post-processors to avoid merge errors
+            if 'merge_output_format' in opts: del opts['merge_output_format']
+            
+            await asyncio.to_thread(run_sync_download, opts, url)
+
+        # --- UPLOAD ---
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
         
@@ -199,7 +210,9 @@ async def callback(client, query):
             await app.send_audio(query.message.chat.id, audio=final_path, thumb=thumb, caption=caption_text, reply_to_message_id=original_msg_id, reply_markup=donate_btn, progress=progress, progress_args=(status_msg, start_time, "☁️ **UPLOADING AUDIO...**"))
         else:
             await app.send_video(query.message.chat.id, video=final_path, thumb=thumb, caption=caption_text, supports_streaming=True, reply_to_message_id=original_msg_id, reply_markup=donate_btn, progress=progress, progress_args=(status_msg, start_time, "☁️ **UPLOADING VIDEO...**"))
+            
         await status_msg.delete()
+
     except Exception as e:
         await status_msg.edit_text(f"⚠️ Error: {e}")
     finally:
