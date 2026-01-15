@@ -22,7 +22,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v25.0 - TV Mode)"
+    return "✅ Bot is Running (v26.0 - Syntax Fixed)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -70,11 +70,15 @@ async def progress(current, total, message, start_time, status_text):
 @app.on_message(filters.command("start"))
 async def start(client, message):
     welcome_text = (
-        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n\n"
-        "**NOTE:** This version uses 'TV Mode'.\n"
-        "Please ensure you have uploaded `cookies.txt` to GitHub."
+        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n"
+        "I can download videos **up to 2GB!** 🚀\n\n"
+        "**How to use:**\n"
+        "1️⃣ Send a YouTube link 🔗\n"
+        "2️⃣ Select Quality ✨\n"
+        "3️⃣ I will use multiple methods to download! 📥"
     )
-    await message.reply_text(welcome_text)
+    buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
+    await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
 
 @app.on_message(filters.text & ~filters.command("start"), group=2)
 async def handle_link(client, message):
@@ -86,21 +90,39 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 7. SHOW OPTIONS ---
+# --- 7. SHOW OPTIONS (ROTATION LOGIC) ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Scanning via TV Mode...**", quote=True)
+    msg = await message.reply_text("🔎 **Scanning...**", quote=True)
     
-    # TV Mode often bypasses the "Bot Check" even with foreign cookies
-    opts = {
-        'quiet': True, 'noprogress': True, 'logger': silent_logger,
-        'cookiefile': 'cookies.txt', # MUST HAVE COOKIES
-        'extractor_args': {'youtube': {'player_client': ['tv']}}, 
-    }
+    # Try different clients: TV -> Android -> iOS -> Web
+    clients = ['tv', 'android', 'ios', 'web']
+    info = None
+    last_error = ""
+
+    # Check if cookies exist
+    cookie_file = 'cookies.txt' if os.path.exists('cookies.txt') else None
+
+    for client_name in clients:
+        try:
+            opts = {
+                'quiet': True, 
+                'noprogress': True, 
+                'logger': silent_logger,
+                'cookiefile': cookie_file,
+                'extractor_args': {'youtube': {'player_client': [client_name]}},
+            }
+            info = await asyncio.to_thread(run_sync_info, opts, url)
+            if info: break 
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+    if not info:
+        await msg.edit_text(f"⚠️ **Scan Failed.**\nYouTube blocked the connection.\nError: {last_error}")
+        return
 
     try:
-        info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
-
         resolutions = [1080, 720, 480, 360]
         buttons_list = []
         for res in resolutions:
@@ -115,7 +137,7 @@ async def show_options(message, url):
         await message.reply_text(f"🎬 **{title}**", reply_markup=InlineKeyboardMarkup(keyboard), quote=True)
     
     except Exception as e:
-        await msg.edit_text(f"⚠️ **Scan Error:** {e}\n\n*Check:* Did you upload `cookies.txt`?")
+        await msg.edit_text(f"⚠️ **Error:** {e}")
 
 def run_sync_download(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl: return ydl.download([url])
@@ -149,29 +171,48 @@ async def callback(client, query):
             ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'
         ext = 'mp4'
 
-    opts = {
-        'format': ydl_fmt,
-        'outtmpl': f'{filename}.%(ext)s',
-        'quiet': True, 'noprogress': True, 'logger': silent_logger,
-        'cookiefile': 'cookies.txt', # COOKIES REQUIRED
-        'extractor_args': {'youtube': {'player_client': ['tv']}}, # TV MODE
-        'writethumbnail': True,
-        'concurrent_fragment_downloads': 5,
-        'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-    }
-    
-    if ext == "mp3": 
-        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
-    else:
-        opts['merge_output_format'] = 'mp4'
-
-    final_path = f"{filename}.{ext}"
-    thumb_path = f"{filename}.jpg"
+    # ROTATION + COOKIE CHECK
+    clients_to_try = ['tv', 'android', 'ios', 'web']
+    cookie_file = 'cookies.txt' if os.path.exists('cookies.txt') else None
+    success = False
 
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING...**")
-        await asyncio.to_thread(run_sync_download, opts, url)
+        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(Trying multiple methods...)")
         
+        final_path = f"{filename}.{ext}"
+        thumb_path = f"{filename}.jpg"
+
+        for client_name in clients_to_try:
+            try:
+                opts = {
+                    'format': ydl_fmt,
+                    'outtmpl': f'{filename}.%(ext)s',
+                    'quiet': True, 
+                    'noprogress': True, 
+                    'logger': silent_logger,
+                    'cookiefile': cookie_file,
+                    'extractor_args': {'youtube': {'player_client': [client_name]}},
+                    'writethumbnail': True,
+                    'concurrent_fragment_downloads': 5,
+                    'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
+                }
+                
+                if ext == "mp3": 
+                    opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
+                else:
+                    opts['merge_output_format'] = 'mp4'
+                
+                await asyncio.to_thread(run_sync_download, opts, url)
+                
+                if os.path.exists(final_path) and os.path.getsize(final_path) > 0:
+                    success = True
+                    break 
+            except:
+                continue 
+
+        if not success:
+            raise Exception("YouTube blocked all download attempts.")
+
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
         thumb = thumb_path if os.path.exists(thumb_path) else None
@@ -189,121 +230,7 @@ async def callback(client, query):
         if os.path.exists(thumb_path): os.remove(thumb_path)
 
 if __name__ == '__main__':
+    print("✅ System Starting...")
     app.start()
-    idle()async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Scanning Video...**", quote=True)
-    
-    # Use OAuth Logger
-    logger = AuthLogger(app, message.chat.id, msg.id)
-
-    opts = {
-        'quiet': False, 
-        'logger': logger,
-        'username': 'oauth2',  # <--- This triggers the Login Code
-    }
-
-    try:
-        info = await asyncio.to_thread(run_sync_info, opts, url)
-        title = info.get('title', 'Video')
-
-        resolutions = [1080, 720, 480, 360]
-        buttons_list = []
-        for res in resolutions:
-            buttons_list.append(InlineKeyboardButton(f"🎬 {res}p", callback_data=f"video_{res}"))
-        
-        buttons_list.append(InlineKeyboardButton("🌟 Best Quality", callback_data="video_best"))
-        
-        keyboard = [buttons_list[i:i+2] for i in range(0, len(buttons_list), 2)]
-        keyboard.append([InlineKeyboardButton("🎵 Audio (MP3)", callback_data="audio_mp3")])
-
-        await msg.delete()
-        await message.reply_text(f"🎬 **{title}**", reply_markup=InlineKeyboardMarkup(keyboard), quote=True)
-    
-    except Exception as e:
-        if "Sign in" in str(e):
-             await msg.edit_text("❌ **Login Timed Out.** Please send link again and enter code quickly.")
-        else:
-             await msg.edit_text(f"⚠️ Error: {e}")
-
-def run_sync_download(opts, url):
-    with yt_dlp.YoutubeDL(opts) as ydl: return ydl.download([url])
-
-def run_sync_info(opts, url):
-    with yt_dlp.YoutubeDL(opts) as ydl: return ydl.extract_info(url, download=False)
-
-url_store = {}
-
-# --- 8. DOWNLOAD HANDLER (WITH AUTH) ---
-@app.on_callback_query()
-async def callback(client, query):
-    data = query.data
-    user_id = query.from_user.id
-    stored = url_store.get(user_id)
-    
-    if not stored: return await query.answer("❌ Expired", show_alert=True)
-    url = stored['url']
-    
-    await query.message.delete()
-    status_msg = await query.message.reply_text("⏳ **Initializing...**")
-    filename = f"vid_{user_id}_{int(time.time())}"
-
-    if data == "audio_mp3":
-        ydl_fmt = 'bestaudio/best'; ext = 'mp3'
-    else:
-        # e.g. video_720
-        if "best" in data:
-            ydl_fmt = 'bestvideo+bestaudio/best'
-        else:
-            res = data.split("_")[1]
-            ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'
-        ext = 'mp4'
-
-    # Attach Logger again
-    logger = AuthLogger(app, query.message.chat.id, status_msg.id)
-    
-    opts = {
-        'format': ydl_fmt,
-        'outtmpl': f'{filename}.%(ext)s',
-        'quiet': False, 
-        'logger': logger,
-        'username': 'oauth2', # <--- Triggers Login if needed
-        'writethumbnail': True,
-        'concurrent_fragment_downloads': 5,
-        'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-    }
-    
-    if ext == "mp3": 
-        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
-    else:
-        opts['merge_output_format'] = 'mp4'
-
-    final_path = f"{filename}.{ext}"
-    thumb_path = f"{filename}.jpg"
-
-    try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(Watch for Login Code!)")
-        await asyncio.to_thread(run_sync_download, opts, url)
-        
-        await status_msg.edit_text("☁️ **UPLOADING...**")
-        start_time = time.time()
-        thumb = thumb_path if os.path.exists(thumb_path) else None
-        
-        if ext == "mp3":
-            await app.send_audio(query.message.chat.id, audio=final_path, thumb=thumb, progress=progress, progress_args=(status_msg, start_time, "☁️ Uploading..."))
-        else:
-            await app.send_video(query.message.chat.id, video=final_path, thumb=thumb, progress=progress, progress_args=(status_msg, start_time, "☁️ Uploading..."))
-        
-        await status_msg.delete()
-    except Exception as e:
-        if "Sign in" in str(e):
-             await status_msg.edit_text("❌ **Login Timed Out.**")
-        else:
-             await status_msg.edit_text(f"⚠️ Error: {e}")
-    finally:
-        if os.path.exists(final_path): os.remove(final_path)
-        if os.path.exists(thumb_path): os.remove(thumb_path)
-
-if __name__ == '__main__':
-    app.start()
+    print("✅ Bot Started & Connected to Telegram!")
     idle()
-
