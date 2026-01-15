@@ -4,6 +4,7 @@ import asyncio
 import time
 import logging
 import threading
+import re
 from flask import Flask
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -22,7 +23,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v23.0 - Safe Android Mode)"
+    return "✅ Bot is Running (v24.0 - Google Login Fix)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -32,18 +33,49 @@ t = threading.Thread(target=run_web_server)
 t.daemon = True
 t.start()
 
-# --- 3. THE SILENCER ---
-class UniversalFakeLogger:
+# --- 3. SMART LOGGER (CATCHES THE CODE) ---
+class AuthLogger:
+    def __init__(self, client, chat_id, msg_id):
+        self.client = client
+        self.chat_id = chat_id
+        self.msg_id = msg_id
+        self.code_shown = False
+
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
     def isatty(self): return False
-    def debug(self, *args, **kwargs): pass
-    def warning(self, *args, **kwargs): pass
-    def error(self, *args, **kwargs): pass
-    def info(self, *args, **kwargs): pass
-    def critical(self, *args, **kwargs): pass
+    
+    def debug(self, msg): self.check(msg)
+    def info(self, msg): self.check(msg)
+    def warning(self, msg): self.check(msg)
+    def error(self, msg): self.check(msg)
 
-silent_logger = UniversalFakeLogger()
+    def check(self, msg):
+        # YouTube says: "To give yt-dlp access... enter code XXXX-YYYY"
+        if "google.com/device" in msg and not self.code_shown:
+            self.code_shown = True
+            try:
+                # Find the code
+                match = re.search(r'code\s+([A-Z0-9-]+)', msg)
+                if match:
+                    code = match.group(1)
+                    text = (
+                        f"⚠️ **YOUTUBE LOGIN REQUIRED** ⚠️\n\n"
+                        f"YouTube blocked the server. You MUST authorize it manually.\n\n"
+                        f"1️⃣ Open: [google.com/device](https://www.google.com/device)\n"
+                        f"2️⃣ Enter Code: `{code}`\n\n"
+                        f"⏳ **Waiting for you... (Do not close this)**"
+                    )
+                    self.client.loop.create_task(
+                        self.client.edit_message_text(
+                            chat_id=self.chat_id, 
+                            message_id=self.msg_id, 
+                            text=text, 
+                            disable_web_page_preview=True
+                        )
+                    )
+            except:
+                pass
 
 # --- 4. SETUP CLIENT ---
 logging.basicConfig(level=logging.INFO)
@@ -70,15 +102,11 @@ async def progress(current, total, message, start_time, status_text):
 @app.on_message(filters.command("start"))
 async def start(client, message):
     welcome_text = (
-        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n"
-        "I can download videos **up to 2GB!** 🚀\n\n"
-        "**How to use:**\n"
-        "1️⃣ Send a YouTube link 🔗\n"
-        "2️⃣ Select Quality ✨\n"
-        "3️⃣ I will use safe mode to avoid errors! 📥"
+        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n\n"
+        "**NOTE:** If YouTube blocks the bot, I will send you a **Login Code**.\n"
+        "You must enter it in Google to verify you are human."
     )
-    buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
-    await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
+    await message.reply_text(welcome_text)
 
 @app.on_message(filters.text & ~filters.command("start"), group=2)
 async def handle_link(client, message):
@@ -90,14 +118,17 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 7. SHOW OPTIONS ---
+# --- 7. SHOW OPTIONS (WITH AUTH) ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Scanning...**", quote=True)
+    msg = await message.reply_text("🔎 **Scanning Video...**", quote=True)
     
-    # Use Android Client WITHOUT Cookies (Safest Method)
+    # Use OAuth Logger
+    logger = AuthLogger(app, message.chat.id, msg.id)
+
     opts = {
-        'quiet': True, 'noprogress': True, 'logger': silent_logger,
-        'extractor_args': {'youtube': {'player_client': ['android']}},
+        'quiet': False, 
+        'logger': logger,
+        'username': 'oauth2',  # <--- This triggers the Login Code
     }
 
     try:
@@ -109,9 +140,8 @@ async def show_options(message, url):
         for res in resolutions:
             buttons_list.append(InlineKeyboardButton(f"🎬 {res}p", callback_data=f"video_{res}"))
         
-        # Add a "Best Quality" button as a backup
         buttons_list.append(InlineKeyboardButton("🌟 Best Quality", callback_data="video_best"))
-
+        
         keyboard = [buttons_list[i:i+2] for i in range(0, len(buttons_list), 2)]
         keyboard.append([InlineKeyboardButton("🎵 Audio (MP3)", callback_data="audio_mp3")])
 
@@ -119,7 +149,10 @@ async def show_options(message, url):
         await message.reply_text(f"🎬 **{title}**", reply_markup=InlineKeyboardMarkup(keyboard), quote=True)
     
     except Exception as e:
-        await msg.edit_text(f"⚠️ **Scan Error:** {e}\n\nMake sure cookies.txt is DELETED from GitHub.")
+        if "Sign in" in str(e):
+             await msg.edit_text("❌ **Login Timed Out.** Please send link again and enter code quickly.")
+        else:
+             await msg.edit_text(f"⚠️ Error: {e}")
 
 def run_sync_download(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl: return ydl.download([url])
@@ -129,7 +162,7 @@ def run_sync_info(opts, url):
 
 url_store = {}
 
-# --- 8. DOWNLOAD HANDLER (SAFE MODE) ---
+# --- 8. DOWNLOAD HANDLER (WITH AUTH) ---
 @app.on_callback_query()
 async def callback(client, query):
     data = query.data
@@ -143,47 +176,43 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⏳ **Initializing...**")
     filename = f"vid_{user_id}_{int(time.time())}"
 
-    # FORMAT LOGIC
     if data == "audio_mp3":
         ydl_fmt = 'bestaudio/best'; ext = 'mp3'
-    elif data == "video_best":
-        ydl_fmt = 'bestvideo+bestaudio/best'; ext = 'mp4'
     else:
-        # e.g., video_720
-        res = data.split("_")[1]
-        # SAFE MODE: Try exact -> Fallback to best if failed
-        ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'; ext = 'mp4'
+        # e.g. video_720
+        if "best" in data:
+            ydl_fmt = 'bestvideo+bestaudio/best'
+        else:
+            res = data.split("_")[1]
+            ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'
+        ext = 'mp4'
+
+    # Attach Logger again
+    logger = AuthLogger(app, query.message.chat.id, status_msg.id)
+    
+    opts = {
+        'format': ydl_fmt,
+        'outtmpl': f'{filename}.%(ext)s',
+        'quiet': False, 
+        'logger': logger,
+        'username': 'oauth2', # <--- Triggers Login if needed
+        'writethumbnail': True,
+        'concurrent_fragment_downloads': 5,
+        'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
+    }
+    
+    if ext == "mp3": 
+        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
+    else:
+        opts['merge_output_format'] = 'mp4'
 
     final_path = f"{filename}.{ext}"
     thumb_path = f"{filename}.jpg"
 
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(No Cookies Mode)")
-        
-        opts = {
-            'format': ydl_fmt,
-            'outtmpl': f'{filename}.%(ext)s',
-            'quiet': True, 'noprogress': True, 'logger': silent_logger,
-            'extractor_args': {'youtube': {'player_client': ['android']}},
-            'writethumbnail': True,
-            'concurrent_fragment_downloads': 5,
-            'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-        }
-        
-        if ext == "mp3": 
-            opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
-        else:
-            opts['merge_output_format'] = 'mp4'
-
+        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(Watch for Login Code!)")
         await asyncio.to_thread(run_sync_download, opts, url)
         
-        # FINAL CHECK: Did the file actually download?
-        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
-            # Fallback to Simple Download if merge failed
-            opts['format'] = 'best'
-            if 'merge_output_format' in opts: del opts['merge_output_format']
-            await asyncio.to_thread(run_sync_download, opts, url)
-
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
         thumb = thumb_path if os.path.exists(thumb_path) else None
@@ -195,7 +224,10 @@ async def callback(client, query):
         
         await status_msg.delete()
     except Exception as e:
-        await status_msg.edit_text(f"⚠️ Error: {e}")
+        if "Sign in" in str(e):
+             await status_msg.edit_text("❌ **Login Timed Out.**")
+        else:
+             await status_msg.edit_text(f"⚠️ Error: {e}")
     finally:
         if os.path.exists(final_path): os.remove(final_path)
         if os.path.exists(thumb_path): os.remove(thumb_path)
