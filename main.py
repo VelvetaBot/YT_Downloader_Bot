@@ -22,7 +22,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v24.1 - Syntax Fixed)"
+    return "✅ Bot is Running (v25.0 - TV Embedded Mode)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -71,8 +71,8 @@ async def progress(current, total, message, start_time, status_text):
 async def start(client, message):
     welcome_text = (
         "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n\n"
-        "**System Status:** Hybrid Cookies Mode 🍪\n"
-        "I will rotate clients to find the best quality!"
+        "**System Status:** TV Embedded Mode Active 📺\n"
+        "Send me a link to download!"
     )
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -87,36 +87,39 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 7. SHOW OPTIONS (MULTI-CLIENT SCAN) ---
+# --- 7. SHOW OPTIONS (TV EMBEDDED STRATEGY) ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Scanning (Checking Clients)...**", quote=True)
+    msg = await message.reply_text("🔎 **Scanning Video...**", quote=True)
     
-    # Try different clients WITH cookies until one works
-    clients = ['android', 'ios', 'web', 'tv']
+    # STRATEGY: Use 'tv_embedded' client. It is very resistant to blocks.
+    # If that fails, fall back to 'android'.
+    strategies = ['tv_embedded', 'android', 'web']
     info = None
     last_error = ""
 
-    for client_name in clients:
+    for strat in strategies:
         try:
             opts = {
                 'quiet': True, 
                 'noprogress': True, 
                 'logger': silent_logger,
-                'cookiefile': 'cookies.txt', # Using Cookies
-                'extractor_args': {'youtube': {'player_client': [client_name]}},
+                'cookiefile': 'cookies.txt', 
+                'extractor_args': {'youtube': {'player_client': [strat]}},
             }
             info = await asyncio.to_thread(run_sync_info, opts, url)
-            if info: break # Success!
+            if info: break
         except Exception as e:
             last_error = str(e)
             continue
 
     if not info:
-        await msg.edit_text(f"⚠️ **Scan Error:** All clients failed.\nLast Error: {last_error}\nCheck your cookies.txt")
+        await msg.edit_text(f"⚠️ **Scan Error:** YouTube blocked all clients.\nError: {last_error}")
         return
 
     try:
         title = info.get('title', 'Video')
+        
+        # Hardcoded list to ensure buttons appear even if metadata is partial
         resolutions = [2160, 1440, 1080, 720, 480, 360, 240, 144]
         buttons_list = []
         for res in resolutions:
@@ -141,7 +144,7 @@ def run_sync_info(opts, url):
 
 url_store = {}
 
-# --- 8. DOWNLOAD HANDLER (MULTI-CLIENT DOWNLOAD) ---
+# --- 8. DOWNLOAD HANDLER ---
 @app.on_callback_query()
 async def callback(client, query):
     data = query.data
@@ -160,27 +163,25 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⏳ **Initializing...**")
     filename = f"vid_{user_id}_{int(time.time())}"
 
-    # --- THIS WAS THE FIXED SECTION ---
+    # Format Logic
     if data == "audio_mp3":
-        ydl_fmt = 'bestaudio/best'
-        ext = 'mp3'
+        ydl_fmt = 'bestaudio/best'; ext = 'mp3'
     else:
         res = data.split("_")[1]
-        ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'
-        ext = 'mp4'
-    # ----------------------------------
+        # Robust format selector: Try exact height, otherwise best video
+        ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'; ext = 'mp4'
 
     final_path = f"{filename}.{ext}"
     thumb_path = f"{filename}.jpg"
 
-    # Try clients in order
-    clients_to_try = ['android', 'ios', 'web', 'tv']
+    # STRATEGY LOOP: TV -> Android -> Web
+    strategies = ['tv_embedded', 'android', 'web']
     success = False
 
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING...**")
+        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(Bypassing blocks...)")
         
-        for client_name in clients_to_try:
+        for strat in strategies:
             try:
                 opts = {
                     'format': ydl_fmt,
@@ -188,8 +189,8 @@ async def callback(client, query):
                     'quiet': True, 
                     'noprogress': True, 
                     'logger': silent_logger,
-                    'cookiefile': 'cookies.txt', # Using Cookies
-                    'extractor_args': {'youtube': {'player_client': [client_name]}},
+                    'cookiefile': 'cookies.txt', 
+                    'extractor_args': {'youtube': {'player_client': [strat]}},
                     'writethumbnail': True,
                     'concurrent_fragment_downloads': 5,
                     'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
@@ -204,12 +205,12 @@ async def callback(client, query):
                 
                 if os.path.exists(final_path) and os.path.getsize(final_path) > 0:
                     success = True
-                    break # It worked!
+                    break 
             except:
                 continue
 
         if not success:
-            raise Exception("Download failed on all clients.")
+            raise Exception("All bypass strategies failed. Check Server IP.")
 
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
