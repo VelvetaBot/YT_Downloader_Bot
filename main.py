@@ -4,6 +4,7 @@ import asyncio
 import time
 import logging
 import threading
+import re
 from flask import Flask
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -14,7 +15,6 @@ API_ID = 11253846
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a"
 BOT_TOKEN = "8034075115:AAG1mS-FAopJN3TykUBhMWtE6nQOlhBsKNk"
 
-# LINKS
 CHANNEL_LINK = "https://t.me/Velvetabots"
 DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"
 
@@ -23,7 +23,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v19.0 - iPhone Mode)"
+    return "✅ Bot is Running (v20.0 - OAuth2 Mode)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -33,18 +33,51 @@ t = threading.Thread(target=run_web_server)
 t.daemon = True
 t.start()
 
-# --- 3. THE SILENCER ---
-class UniversalFakeLogger:
+# --- 3. SMART LOGGER (CAPTURES LOGIN CODE) ---
+class OAuthLogger:
+    def __init__(self, client, chat_id, msg_id):
+        self.client = client
+        self.chat_id = chat_id
+        self.msg_id = msg_id
+        self.code_detected = False
+
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
     def isatty(self): return False
-    def debug(self, *args, **kwargs): pass
-    def warning(self, *args, **kwargs): pass
-    def error(self, *args, **kwargs): pass
-    def info(self, *args, **kwargs): pass
-    def critical(self, *args, **kwargs): pass
+    
+    def debug(self, msg): self.check_auth(msg)
+    def info(self, msg): self.check_auth(msg)
+    def warning(self, msg): self.check_auth(msg)
+    def error(self, msg): self.check_auth(msg)
 
-silent_logger = UniversalFakeLogger()
+    def check_auth(self, msg):
+        # YouTube sends a message like: "To give yt-dlp access... go to google.com/device and enter code ABCD-1234"
+        if "google.com/device" in msg and not self.code_detected:
+            self.code_detected = True
+            try:
+                # Find the code (e.g., R45G-H78J)
+                match = re.search(r'code\s+([A-Z0-9-]+)', msg)
+                if match:
+                    code = match.group(1)
+                    # Send alert to user
+                    text = (
+                        f"⚠️ **YOUTUBE LOGIN REQUIRED**\n\n"
+                        f"YouTube blocked the server. Please authorize it manually:\n\n"
+                        f"1️⃣ Tap here: [google.com/device](https://www.google.com/device)\n"
+                        f"2️⃣ Enter Code: `{code}`\n\n"
+                        f"⏳ **Waiting for you... (Don't close this)**"
+                    )
+                    # Send update to Telegram safely
+                    self.client.loop.create_task(
+                        self.client.edit_message_text(
+                            chat_id=self.chat_id, 
+                            message_id=self.msg_id, 
+                            text=text, 
+                            disable_web_page_preview=True
+                        )
+                    )
+            except Exception as e:
+                print(f"Logger Error: {e}")
 
 # --- 4. SETUP CLIENT ---
 logging.basicConfig(level=logging.INFO)
@@ -67,100 +100,49 @@ async def progress(current, total, message, start_time, status_text):
     except Exception:
         pass
 
-# --- 6. START COMMAND ---
+# --- 6. COMMANDS ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
     welcome_text = (
-        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n"
-        "I can download videos **up to 2GB!** 🚀\n\n"
-        "**How to use:**\n"
-        "1️⃣ Send a YouTube link 🔗\n"
-        "2️⃣ Select Quality (4K to 144p) ✨\n"
-        "3️⃣ I will handle the rest! 📥"
+        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n\n"
+        "**NOTE:** If I get blocked, I will send you a login code.\n"
+        "You must enter it in Google to verify you are human."
     )
-    buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
-    await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
+    await message.reply_text(welcome_text)
 
-# --- 7. HANDLE DOWNLOADS ---
 @app.on_message(filters.text & ~filters.command("start"), group=2)
 async def handle_link(client, message):
     url = message.text
     user_id = message.from_user.id
+    if "youtube.com" not in url and "youtu.be" not in url: return
     
-    if "youtube.com" not in url and "youtu.be" not in url:
-        return
-
     global url_store
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 8. SHOW OPTIONS (Try iOS first) ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Unlocking Link (iPhone Mode)...**", quote=True)
-    
-    # Client Strategy: iOS -> TV
-    strategies = [
-        {'client': 'ios', 'ua': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'},
-        {'client': 'tv', 'ua': 'Mozilla/5.0 (Chromecast; Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Safari/537.36'}
-    ]
-
-    info = None
-    last_error = ""
-
-    for strat in strategies:
-        try:
-            opts = {
-                'quiet': True, 'noprogress': True, 'logger': silent_logger,
-                'cookiefile': None, # Ensure NO COOKIES
-                'extractor_args': {'youtube': {'player_client': [strat['client']]}},
-                'user_agent': strat['ua']
-            }
-            info = await asyncio.to_thread(run_sync_info, opts, url)
-            if info: break
-        except Exception as e:
-            last_error = str(e)
-            continue
-
-    if not info:
-        await msg.edit_text(f"⚠️ **Failed to bypass YouTube block.**\n\nError: {last_error}\n\n*Note: Ensure cookies.txt is DELETED.*")
-        return
-
+    msg = await message.reply_text("🔎 **Scanning...**", quote=True)
     try:
+        # Simple scan first
+        opts = {'quiet': True, 'extractor_args': {'youtube': {'player_client': ['android']}}}
+        info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
+
         resolutions = [2160, 1440, 1080, 720, 480, 360, 240, 144]
         buttons_list = []
         for res in resolutions:
-            if res == 2160: label = "🎬 4K (2160p)"
-            elif res == 1440: label = "🎬 2K (1440p)"
-            else: label = f"🎬 {res}p"
-            
-            if res == 144:
-                buttons_list.append(InlineKeyboardButton(label, callback_data="warn_144"))
-            else:
-                buttons_list.append(InlineKeyboardButton(label, callback_data=f"video_{res}"))
+            label = f"🎬 {res}p" if res not in [2160, 1440] else f"🎬 {'4K' if res==2160 else '2K'}"
+            data = "warn_144" if res == 144 else f"video_{res}"
+            buttons_list.append(InlineKeyboardButton(label, callback_data=data))
         
-        keyboard = []
-        temp_row = []
-        for btn in buttons_list:
-            temp_row.append(btn)
-            if len(temp_row) == 2:
-                keyboard.append(temp_row)
-                temp_row = []
-        if temp_row:
-            keyboard.append(temp_row)
-
+        keyboard = [buttons_list[i:i+2] for i in range(0, len(buttons_list), 2)]
         keyboard.append([InlineKeyboardButton("🎵 Audio (MP3)", callback_data="audio_mp3")])
 
         await msg.delete()
-        await message.reply_text(
-            f"🎬 **{title}**\n\n👇 **Select Preferred Quality:**", 
-            reply_markup=InlineKeyboardMarkup(keyboard), 
-            quote=True
-        )
+        await message.reply_text(f"🎬 **{title}**", reply_markup=InlineKeyboardMarkup(keyboard), quote=True)
     except Exception as e:
-        await msg.edit_text(f"⚠️ Error: {e}")
+        await msg.edit_text(f"⚠️ **Scan Failed:** {e}")
 
-# --- HELPERS ---
 def run_sync_download(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl: return ydl.download([url])
 
@@ -169,103 +151,75 @@ def run_sync_info(opts, url):
 
 url_store = {}
 
-# --- 9. HANDLE CALLBACKS ---
 @app.on_callback_query()
 async def callback(client, query):
     data = query.data
     user_id = query.from_user.id
+    stored = url_store.get(user_id)
     
-    stored_data = url_store.get(user_id)
-    if not stored_data:
-         await query.answer("❌ Link expired. Send again.", show_alert=True)
-         return
+    if not stored: return await query.answer("❌ Expired", show_alert=True)
+    url = stored['url']
     
-    url = stored_data['url']
-    original_msg_id = stored_data['msg_id']
-
     if data == "warn_144":
-        warning_text = ("⚠️ **144p Warning**\nVideo will be blurry. Proceed?")
-        buttons = [[InlineKeyboardButton("✅ Yes", callback_data="video_144")], [InlineKeyboardButton("🔙 Back", callback_data="back_to_options")]]
-        await query.message.edit_text(warning_text, reply_markup=InlineKeyboardMarkup(buttons))
-        return
-
-    if data == "back_to_options":
-        await query.message.delete()
-        await show_options(client.get_messages(query.message.chat.id, original_msg_id), url)
+        await query.message.edit_text("⚠️ **144p is blurry. Confirm?**", 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Yes", callback_data="video_144")]]))
         return
 
     await query.message.delete()
-    status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
+    status_msg = await query.message.reply_text("⏳ **Initializing...**")
     filename = f"vid_{user_id}_{int(time.time())}"
-    
-    if data == "audio_mp3":
-        ydl_fmt = 'bestaudio/best'; ext = 'mp3'; display_res = "Audio"
-    else:
-        res = data.split("_")[1]; display_res = f"{res}p"
-        ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'; ext = 'mp4'
 
-    # --- DUAL CLIENT STRATEGY (iOS -> TV) ---
-    strategies = [
-        {'client': 'ios', 'ua': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'},
-        {'client': 'tv', 'ua': 'Mozilla/5.0 (Chromecast; Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Safari/537.36'}
-    ]
+    if data == "audio_mp3":
+        ydl_fmt = 'bestaudio/best'; ext = 'mp3'
+    else:
+        res = data.split("_")[1]
+        ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best/best'; ext = 'mp4'
+
+    # --- OAUTH2 ACTIVATION ---
+    custom_logger = OAuthLogger(app, query.message.chat.id, status_msg.id)
     
+    opts = {
+        'format': ydl_fmt,
+        'outtmpl': f'{filename}.%(ext)s',
+        'quiet': False, 
+        'logger': custom_logger,  # Catches the code
+        'username': 'oauth2',     # Forces Login if needed
+        'writethumbnail': True,
+        'concurrent_fragment_downloads': 5,
+        'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
+    }
+    
+    if ext == "mp3": 
+        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
+    else:
+        opts['merge_output_format'] = 'mp4'
+
     final_path = f"{filename}.{ext}"
-    thumb_path = f"{filename}.jpg" 
-    success = False
+    thumb_path = f"{filename}.jpg"
 
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING {display_res}...**\n(Using iPhone/TV Bypass...)\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
+        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(If stuck, check for login code!)")
+        await asyncio.to_thread(run_sync_download, opts, url)
         
-        for strat in strategies:
-            try:
-                opts = {
-                    'format': ydl_fmt, 
-                    'outtmpl': f'{filename}.%(ext)s',
-                    'quiet': True, 'noprogress': True, 'logger': silent_logger, 
-                    'cookiefile': None, # STRICTLY NO COOKIES
-                    'extractor_args': {'youtube': {'player_client': [strat['client']]}},
-                    'user_agent': strat['ua'],
-                    'writethumbnail': True, 'concurrent_fragment_downloads': 5, 
-                    'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-                }
-                
-                if ext == "mp4": opts['merge_output_format'] = 'mp4'
-                else: opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
-                
-                await asyncio.to_thread(run_sync_download, opts, url)
-                
-                if os.path.exists(final_path) and os.path.getsize(final_path) > 0:
-                    success = True
-                    break # Success!
-            except:
-                continue
-
-        if not success:
-            raise Exception("All bypass methods (iOS/TV) failed. Server is heavily blocked.")
-
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
-        
-        donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate / Support", url=DONATE_LINK)]])
         thumb = thumb_path if os.path.exists(thumb_path) else None
-        caption_text = f"✅ **Download Via @VelvetaYTDownloaderBot**"
-
+        
         if ext == "mp3":
-            await app.send_audio(query.message.chat.id, audio=final_path, thumb=thumb, caption=caption_text, reply_to_message_id=original_msg_id, reply_markup=donate_btn, progress=progress, progress_args=(status_msg, start_time, "☁️ **UPLOADING AUDIO...**"))
+            await app.send_audio(query.message.chat.id, audio=final_path, thumb=thumb, progress=progress, progress_args=(status_msg, start_time, "☁️ Uploading..."))
         else:
-            await app.send_video(query.message.chat.id, video=final_path, thumb=thumb, caption=caption_text, supports_streaming=True, reply_to_message_id=original_msg_id, reply_markup=donate_btn, progress=progress, progress_args=(status_msg, start_time, "☁️ **UPLOADING VIDEO...**"))
-            
+            await app.send_video(query.message.chat.id, video=final_path, thumb=thumb, progress=progress, progress_args=(status_msg, start_time, "☁️ Uploading..."))
+        
         await status_msg.delete()
-
     except Exception as e:
-        await status_msg.edit_text(f"⚠️ Error: {e}")
+        if "Sign in" in str(e):
+            await status_msg.edit_text("❌ **Login Timed Out.** Please try again and enter the code quickly.")
+        else:
+            await status_msg.edit_text(f"⚠️ Error: {e}")
     finally:
         if os.path.exists(final_path): os.remove(final_path)
         if os.path.exists(thumb_path): os.remove(thumb_path)
 
 if __name__ == '__main__':
-    print("✅ System Starting...")
     app.start()
-    print("✅ Bot Started & Connected to Telegram!")
     idle()
