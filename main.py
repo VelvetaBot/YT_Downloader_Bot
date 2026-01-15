@@ -1,24 +1,42 @@
-import sys
 import os
+import sys
 import asyncio
 import time
 import logging
-from pyrogram import Client, filters, errors
+import threading
+from flask import Flask
+from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.enums import ChatMemberStatus
 import yt_dlp
-from keep_alive import keep_alive  
 
 # --- 1. CONFIGURATION ---
-API_ID = 11253846                   
-API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
+API_ID = 11253846
+API_HASH = "8db4eb50f557faa9a5756e64fb74a51a"
 BOT_TOKEN = "8034075115:AAG1mS-FAopJN3TykUBhMWtE6nQOlhBsKNk"
 
 # LINKS
-CHANNEL_LINK = "https://t.me/Velvetabots"              
-DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"   
+CHANNEL_LINK = "https://t.me/Velvetabots"
+DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"
 
-# --- 2. THE SILENCER (ONLY FOR YT-DLP) ---
+# --- 2. INTERNAL WEB SERVER (Keep Alive) ---
+# We put this INSIDE main.py to ensure it updates correctly
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    return "✅ Bot is Running (v3.0 - IPv4 Fixed)"
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    web_app.run(host='0.0.0.0', port=port)
+
+# Start Web Server in a Background Thread
+t = threading.Thread(target=run_web_server)
+t.daemon = True
+t.start()
+
+# --- 3. THE SILENCER (Prevents Download Errors) ---
 class UniversalFakeLogger:
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
@@ -31,14 +49,12 @@ class UniversalFakeLogger:
 
 silent_logger = UniversalFakeLogger()
 
-# --- 3. SETUP CLIENT ---
-# Enable logging so we can see real errors in Render logs
+# --- 4. SETUP CLIENT ---
 logging.basicConfig(level=logging.INFO)
-
-# ⚠️ FIX: ipv6=False (This fixes the Network Error)
+# IPv6 is FALSE to fix the network error
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=False)
 
-# --- 4. RELIABLE PROGRESS BAR ---
+# --- 5. PROGRESS BAR ---
 async def progress(current, total, message, start_time, status_text):
     try:
         now = time.time()
@@ -53,52 +69,17 @@ async def progress(current, total, message, start_time, status_text):
             if message.text != text:
                 await message.edit_text(text)
     except Exception:
-        pass 
+        pass
 
-# --- 5. GROUP MODERATION (STRICT) ---
-@app.on_message(filters.group, group=1)
-async def group_moderation(client, message):
-    if not message.text: return
-    
-    # 1. Check if User is Admin (If Admin, Allow EVERYTHING)
-    try:
-        member = await client.get_chat_member(message.chat.id, message.from_user.id)
-        if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR]:
-            return 
-    except:
-        pass 
-
-    text = message.text.lower()
-    
-    # 2. Allowed Domains
-    allowed_domains = [
-        "youtube.com", "youtu.be",  # YouTube
-        "twitter.com", "x.com",     # Twitter/X
-        "instagram.com",            # Instagram
-        "tiktok.com"                # TikTok
-    ]
-
-    has_allowed_link = any(domain in text for domain in allowed_domains)
-
-    # 3. LOGIC: If NO allowed link is found -> DELETE
-    if not has_allowed_link:
-        try:
-            await message.delete()
-        except:
-            pass 
-
-# --- 6. HELPER: THREADED DOWNLOAD ---
-def run_sync_download(opts, url):
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        return ydl.download([url])
-
-def run_sync_info(opts, url):
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        return ydl.extract_info(url, download=False)
+# --- 6. DEBUG LOGGER (To see if bot receives messages) ---
+@app.on_message(group=-1)
+async def log_all_messages(client, message):
+    print(f"📩 RECEIVED MESSAGE from {message.from_user.first_name}: {message.text}")
 
 # --- 7. START COMMAND ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
+    print("✅ START COMMAND TRIGGERED") # Debug print
     welcome_text = (
         "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n"
         "I can download videos **up to 2GB!** 🚀\n\n"
@@ -110,7 +91,7 @@ async def start(client, message):
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
 
-# --- 8. HANDLE DOWNLOADS (ONLY YOUTUBE) ---
+# --- 8. HANDLE DOWNLOADS ---
 @app.on_message(filters.text & ~filters.command("start"), group=2)
 async def handle_link(client, message):
     url = message.text
@@ -119,6 +100,7 @@ async def handle_link(client, message):
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
+    print(f"🔗 PROCESSING LINK: {url}") # Debug print
     global url_store
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
@@ -153,9 +135,16 @@ async def show_options(message, url):
     except Exception as e:
         await msg.edit_text(f"⚠️ Error: {e}")
 
+# --- HELPERS ---
+def run_sync_download(opts, url):
+    with yt_dlp.YoutubeDL(opts) as ydl: return ydl.download([url])
+
+def run_sync_info(opts, url):
+    with yt_dlp.YoutubeDL(opts) as ydl: return ydl.extract_info(url, download=False)
+
 url_store = {}
 
-# --- HANDLE BUTTONS ---
+# --- HANDLE CALLBACKS ---
 @app.on_callback_query()
 async def callback(client, query):
     data = query.data
@@ -173,43 +162,31 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
     filename = f"vid_{user_id}_{int(time.time())}"
     
-    if data == "mp3":
-        ydl_fmt = 'bestaudio/best'; ext = 'mp3'
-    elif data == "1080":
-        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best[height<=1080]'; ext = 'mp4'
-    elif data == "720":
-        ydl_fmt = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best[height<=720]'; ext = 'mp4'
-    else: 
-        ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best[height<=360]'; ext = 'mp4'
+    if data == "mp3": ydl_fmt = 'bestaudio/best'; ext = 'mp3'
+    elif data == "1080": ydl_fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best[height<=1080]'; ext = 'mp4'
+    elif data == "720": ydl_fmt = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best[height<=720]'; ext = 'mp4'
+    else: ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best[height<=360]'; ext = 'mp4'
 
     opts = {
         'format': ydl_fmt, 
         'outtmpl': f'{filename}.%(ext)s',
-        'quiet': True, 'noprogress': True, 
-        'logger': silent_logger, 
+        'quiet': True, 'noprogress': True, 'logger': silent_logger, 
         'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'writethumbnail': True, 
+        'writethumbnail': True, 'concurrent_fragment_downloads': 5, 
         'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-        'concurrent_fragment_downloads': 5, 
-        'retries': 10,
-        'fragment_retries': 10,
     }
     
-    if data != "mp3":
-        opts['merge_output_format'] = 'mp4'
-    else:
-        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
+    if data != "mp3": opts['merge_output_format'] = 'mp4'
+    else: opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
 
     final_path = f"{filename}.{ext}"
     thumb_path = f"{filename}.jpg" 
 
     try:
         await status_msg.edit_text("📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
-        
         await asyncio.to_thread(run_sync_download, opts, url)
-
-        await status_msg.edit_text("☁️ **UPLOADING...**\n(This supports up to 2GB!)")
+        await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
         
         donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate / Support", url=DONATE_LINK)]])
@@ -217,30 +194,18 @@ async def callback(client, query):
         caption_text = "✅ **Download Via @VelvetaYTDownloaderBot**"
 
         if data == "mp3":
-            await app.send_audio(
-                query.message.chat.id, audio=final_path, thumb=thumb, caption=caption_text, 
-                reply_to_message_id=original_msg_id, reply_markup=donate_btn,
-                progress=progress, progress_args=(status_msg, start_time, "☁️ **UPLOADING AUDIO...**")
-            )
+            await app.send_audio(query.message.chat.id, audio=final_path, thumb=thumb, caption=caption_text, reply_to_message_id=original_msg_id, reply_markup=donate_btn, progress=progress, progress_args=(status_msg, start_time, "☁️ **UPLOADING AUDIO...**"))
         else:
-            await app.send_video(
-                query.message.chat.id, video=final_path, thumb=thumb, caption=caption_text, 
-                supports_streaming=True, reply_to_message_id=original_msg_id, reply_markup=donate_btn,
-                progress=progress, progress_args=(status_msg, start_time, "☁️ **UPLOADING VIDEO...**")
-            )
-            
+            await app.send_video(query.message.chat.id, video=final_path, thumb=thumb, caption=caption_text, supports_streaming=True, reply_to_message_id=original_msg_id, reply_markup=donate_btn, progress=progress, progress_args=(status_msg, start_time, "☁️ **UPLOADING VIDEO...**"))
         await status_msg.delete()
-
     except Exception as e:
-        if "NoneType" in str(e) or "FakeWriter" in str(e) or "UniversalFakeLogger" in str(e): pass
-        else: await status_msg.edit_text(f"⚠️ Error: {e}")
+        await status_msg.edit_text(f"⚠️ Error: {e}")
     finally:
-        if os.path.exists(final_path):
-            os.remove(final_path)
-        if os.path.exists(thumb_path):
-            os.remove(thumb_path)
+        if os.path.exists(final_path): os.remove(final_path)
+        if os.path.exists(thumb_path): os.remove(thumb_path)
 
 if __name__ == '__main__':
-    keep_alive()
-    print("✅ Bot Started (IPv4 Mode)")
-    app.run()
+    print("✅ System Starting...")
+    app.start()
+    print("✅ Bot Started & Connected to Telegram!")
+    idle()
