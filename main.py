@@ -25,7 +25,7 @@ sys.stderr = silent_logger
 # --- 2. CONFIGURATION ---
 API_ID = 11253846                   
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
-BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
+BOT_TOKEN = "8034075115:AAG1mS-FAopJN3TykUBhMWtE6nQOlhBsKNk"
 
 # LINKS
 CHANNEL_LINK = "https://t.me/Velvetabots"              # For Start Button
@@ -222,3 +222,4 @@ if __name__ == '__main__':
     keep_alive()
     print("✅ Bot Started (Start=Join, Finish=Donate)")
     app.run()
+
