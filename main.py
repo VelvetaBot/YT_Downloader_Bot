@@ -22,7 +22,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v25.0 - TV Embedded Mode)"
+    return "✅ Bot is Running (v26.0 - Googlebot Mode)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -71,8 +71,8 @@ async def progress(current, total, message, start_time, status_text):
 async def start(client, message):
     welcome_text = (
         "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n\n"
-        "**System Status:** TV Embedded Mode Active 📺\n"
-        "Send me a link to download!"
+        "**System Status:** Googlebot Mode Active 🤖\n"
+        "I am disguised as a Search Engine to bypass blocks!"
     )
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -87,39 +87,24 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 7. SHOW OPTIONS (TV EMBEDDED STRATEGY) ---
+# --- 7. SHOW OPTIONS (GOOGLEBOT SPOOF) ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Scanning Video...**", quote=True)
+    msg = await message.reply_text("🔎 **Scanning (Googlebot Mode)...**", quote=True)
     
-    # STRATEGY: Use 'tv_embedded' client. It is very resistant to blocks.
-    # If that fails, fall back to 'android'.
-    strategies = ['tv_embedded', 'android', 'web']
-    info = None
-    last_error = ""
-
-    for strat in strategies:
-        try:
-            opts = {
-                'quiet': True, 
-                'noprogress': True, 
-                'logger': silent_logger,
-                'cookiefile': 'cookies.txt', 
-                'extractor_args': {'youtube': {'player_client': [strat]}},
-            }
-            info = await asyncio.to_thread(run_sync_info, opts, url)
-            if info: break
-        except Exception as e:
-            last_error = str(e)
-            continue
-
-    if not info:
-        await msg.edit_text(f"⚠️ **Scan Error:** YouTube blocked all clients.\nError: {last_error}")
-        return
-
     try:
-        title = info.get('title', 'Video')
+        # THE TRICK: Pretend to be Googlebot
+        opts = {
+            'quiet': True, 
+            'noprogress': True, 
+            'logger': silent_logger,
+            'cookiefile': None, # NO COOKIES
+            'user_agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+            'extractor_args': {'youtube': {'player_client': ['android_creator']}}, # Obscure client
+        }
         
-        # Hardcoded list to ensure buttons appear even if metadata is partial
+        info = await asyncio.to_thread(run_sync_info, opts, url)
+        title = info.get('title', 'Video')
+
         resolutions = [2160, 1440, 1080, 720, 480, 360, 240, 144]
         buttons_list = []
         for res in resolutions:
@@ -134,7 +119,7 @@ async def show_options(message, url):
         await message.reply_text(f"🎬 **{title}**", reply_markup=InlineKeyboardMarkup(keyboard), quote=True)
     
     except Exception as e:
-        await msg.edit_text(f"⚠️ Error: {e}")
+        await msg.edit_text(f"⚠️ **Scan Error:** {e}")
 
 def run_sync_download(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl: return ydl.download([url])
@@ -163,54 +148,42 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⏳ **Initializing...**")
     filename = f"vid_{user_id}_{int(time.time())}"
 
-    # Format Logic
     if data == "audio_mp3":
         ydl_fmt = 'bestaudio/best'; ext = 'mp3'
     else:
         res = data.split("_")[1]
-        # Robust format selector: Try exact height, otherwise best video
         ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'; ext = 'mp4'
 
     final_path = f"{filename}.{ext}"
     thumb_path = f"{filename}.jpg"
 
-    # STRATEGY LOOP: TV -> Android -> Web
-    strategies = ['tv_embedded', 'android', 'web']
-    success = False
+    # USE GOOGLEBOT SETTINGS FOR DOWNLOAD TOO
+    opts = {
+        'format': ydl_fmt,
+        'outtmpl': f'{filename}.%(ext)s',
+        'quiet': True, 
+        'noprogress': True, 
+        'logger': silent_logger,
+        'cookiefile': None,
+        'user_agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+        'extractor_args': {'youtube': {'player_client': ['android_creator']}},
+        'writethumbnail': True,
+        'concurrent_fragment_downloads': 5,
+        'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
+    }
+    
+    if ext == "mp3": 
+        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
+    else:
+        opts['merge_output_format'] = 'mp4'
 
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(Bypassing blocks...)")
+        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(Mode: Googlebot)")
         
-        for strat in strategies:
-            try:
-                opts = {
-                    'format': ydl_fmt,
-                    'outtmpl': f'{filename}.%(ext)s',
-                    'quiet': True, 
-                    'noprogress': True, 
-                    'logger': silent_logger,
-                    'cookiefile': 'cookies.txt', 
-                    'extractor_args': {'youtube': {'player_client': [strat]}},
-                    'writethumbnail': True,
-                    'concurrent_fragment_downloads': 5,
-                    'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-                }
-                
-                if ext == "mp3": 
-                    opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
-                else:
-                    opts['merge_output_format'] = 'mp4'
-
-                await asyncio.to_thread(run_sync_download, opts, url)
-                
-                if os.path.exists(final_path) and os.path.getsize(final_path) > 0:
-                    success = True
-                    break 
-            except:
-                continue
-
-        if not success:
-            raise Exception("All bypass strategies failed. Check Server IP.")
+        await asyncio.to_thread(run_sync_download, opts, url)
+        
+        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+            raise Exception("Blocked. Try again later.")
 
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
@@ -225,9 +198,3 @@ async def callback(client, query):
     except Exception as e:
         await status_msg.edit_text(f"⚠️ Error: {e}")
     finally:
-        if os.path.exists(final_path): os.remove(final_path)
-        if os.path.exists(thumb_path): os.remove(thumb_path)
-
-if __name__ == '__main__':
-    app.start()
-    idle()
