@@ -23,7 +23,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v11.0 - All Qualities + 144p Warn)"
+    return "✅ Bot is Running (v12.0 - Logger Fixed)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -33,11 +33,17 @@ t = threading.Thread(target=run_web_server)
 t.daemon = True
 t.start()
 
-# --- 3. THE SILENCER ---
+# --- 3. THE SILENCER (FIXED) ---
+# Added back 'debug', 'warning', 'error' to prevent the crash
 class UniversalFakeLogger:
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
     def isatty(self): return False
+    def debug(self, *args, **kwargs): pass
+    def warning(self, *args, **kwargs): pass
+    def error(self, *args, **kwargs): pass
+    def info(self, *args, **kwargs): pass
+    def critical(self, *args, **kwargs): pass
 
 silent_logger = UniversalFakeLogger()
 
@@ -93,6 +99,7 @@ async def handle_link(client, message):
 async def show_options(message, url):
     msg = await message.reply_text("🔎 **Scanning All Resolutions...**", quote=True)
     try:
+        # Using the Fixed Logger here
         opts = {
             'quiet': True, 'noprogress': True, 'logger': silent_logger, 
             'cookiefile': 'cookies.txt', 
@@ -109,18 +116,16 @@ async def show_options(message, url):
             if f.get('vcodec') != 'none' and f.get('height'):
                 available_res.add(f['height'])
         
-        # Sort High to Low (e.g. 2160 -> 144)
+        # Sort High to Low
         sorted_res = sorted(list(available_res), reverse=True)
         
         buttons_list = []
         for res in sorted_res:
-            # Special Callback for 144p to trigger Warning
             if res == 144:
                 buttons_list.append(InlineKeyboardButton(f"🎬 {res}p", callback_data="warn_144"))
             else:
                 buttons_list.append(InlineKeyboardButton(f"🎬 {res}p", callback_data=f"video_{res}"))
         
-        # Grid Layout (2 buttons per row)
         keyboard = []
         temp_row = []
         for btn in buttons_list:
@@ -131,7 +136,6 @@ async def show_options(message, url):
         if temp_row:
             keyboard.append(temp_row)
 
-        # Audio Button
         keyboard.append([InlineKeyboardButton("🎵 Audio (MP3)", callback_data="audio_mp3")])
 
         await msg.delete()
@@ -153,7 +157,7 @@ def run_sync_info(opts, url):
 
 url_store = {}
 
-# --- 9. HANDLE CALLBACKS (WARNING + DOWNLOAD) ---
+# --- 9. HANDLE CALLBACKS ---
 @app.on_callback_query()
 async def callback(client, query):
     data = query.data
@@ -167,42 +171,34 @@ async def callback(client, query):
     url = stored_data['url']
     original_msg_id = stored_data['msg_id']
 
-    # --- A. HANDLE 144p WARNING ---
     if data == "warn_144":
         warning_text = (
             "⚠️ **Low Quality Warning (144p)**\n\n"
-            "Note: This video will be very blurry and low quality. "
-            "It is intended for saving data.\n\n"
-            "We are not responsible for the poor viewing experience. "
-            "Some details may not be visible.\n\n"
+            "Note: This video will be very blurry. "
+            "It is for saving data.\n\n"
             "**Do you want to proceed?**"
         )
         buttons = [
-            [InlineKeyboardButton("✅ Yes, Download 144p", callback_data="video_144")],
-            [InlineKeyboardButton("🔙 Go Back / Change Quality", callback_data="back_to_options")]
+            [InlineKeyboardButton("✅ Yes, Download", callback_data="video_144")],
+            [InlineKeyboardButton("🔙 Go Back", callback_data="back_to_options")]
         ]
         await query.message.edit_text(warning_text, reply_markup=InlineKeyboardMarkup(buttons))
         return
 
-    # --- B. HANDLE BACK BUTTON ---
     if data == "back_to_options":
         await query.message.delete()
         await show_options(client.get_messages(query.message.chat.id, original_msg_id), url)
         return
 
-    # --- C. START DOWNLOAD ---
     await query.message.delete()
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
     filename = f"vid_{user_id}_{int(time.time())}"
     
-    # Format Logic
     if data == "audio_mp3":
         ydl_fmt = 'bestaudio/best'
         ext = 'mp3'
     else:
-        # data is like "video_1080" or "video_144"
         res = data.split("_")[1]
-        # Try exact resolution, fallback to best if merge fails
         ydl_fmt = f'bestvideo[height={res}]+bestaudio/best[height={res}]/best'
         ext = 'mp4'
 
@@ -225,25 +221,18 @@ async def callback(client, query):
     try:
         await status_msg.edit_text(f"📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
         
-        # Download Attempt
         try:
             await asyncio.to_thread(run_sync_download, opts, url)
-            
-            # Check for Empty File
             if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
                 raise Exception("Empty File")
-
         except Exception as e:
-            # Fallback if strict resolution fails (Safety Net)
             await status_msg.edit_text(f"⚠️ **Optimization... Retrying...**")
-            opts['format'] = 'best' # Fallback to single best file
+            opts['format'] = 'best'
             opts['cookiefile'] = None
             if 'extractor_args' in opts: del opts['extractor_args']
             if 'merge_output_format' in opts: del opts['merge_output_format']
-            
             await asyncio.to_thread(run_sync_download, opts, url)
 
-        # Upload
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
         
