@@ -4,7 +4,6 @@ import asyncio
 import time
 import logging
 import threading
-import re
 from flask import Flask
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -24,7 +23,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v18.0 - OAuth2 Fix)"
+    return "✅ Bot is Running (v19.0 - iPhone Mode)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -34,54 +33,18 @@ t = threading.Thread(target=run_web_server)
 t.daemon = True
 t.start()
 
-# --- 3. SMART LOGGER (CAPTURES AUTH CODE) ---
-class OAuthLogger:
-    def __init__(self, client, user_id, status_msg):
-        self.client = client
-        self.user_id = user_id
-        self.status_msg = status_msg
-        self.auth_sent = False
-
+# --- 3. THE SILENCER ---
+class UniversalFakeLogger:
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
     def isatty(self): return False
-    
-    def debug(self, msg): 
-        self.check_auth(msg)
-        
-    def info(self, msg): 
-        self.check_auth(msg)
-        
-    def warning(self, msg): 
-        self.check_auth(msg)
-        
-    def error(self, msg): 
-        pass
+    def debug(self, *args, **kwargs): pass
+    def warning(self, *args, **kwargs): pass
+    def error(self, *args, **kwargs): pass
+    def info(self, *args, **kwargs): pass
+    def critical(self, *args, **kwargs): pass
 
-    def check_auth(self, msg):
-        # Look for the Google Auth message in logs
-        if "google.com/device" in msg and not self.auth_sent:
-            self.auth_sent = True
-            try:
-                # Extract code using Regex
-                code_match = re.search(r'code ([A-Z0-9-]+)', msg)
-                if code_match:
-                    code = code_match.group(1)
-                    # Send alert to user
-                    text = (
-                        f"⚠️ **YOUTUBE LOGIN REQUIRED** ⚠️\n\n"
-                        f"YouTube blocked the server IP. Please authorize it manually:\n"
-                        f"1️⃣ Open: [google.com/device](https://www.google.com/device)\n"
-                        f"2️⃣ Enter Code: `{code}`\n\n"
-                        f"⏳ **Waiting for you to authorize...**"
-                    )
-                    # We use a trick to run async function from sync logger
-                    asyncio.run_coroutine_threadsafe(
-                        self.status_msg.edit_text(text, disable_web_page_preview=True),
-                        self.client.loop
-                    )
-            except:
-                pass
+silent_logger = UniversalFakeLogger()
 
 # --- 4. SETUP CLIENT ---
 logging.basicConfig(level=logging.INFO)
@@ -113,7 +76,7 @@ async def start(client, message):
         "**How to use:**\n"
         "1️⃣ Send a YouTube link 🔗\n"
         "2️⃣ Select Quality (4K to 144p) ✨\n"
-        "3️⃣ If YouTube asks for Login, I will give you a code! 🔐"
+        "3️⃣ I will handle the rest! 📥"
     )
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -131,18 +94,39 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 8. SHOW OPTIONS ---
+# --- 8. SHOW OPTIONS (Try iOS first) ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Scanning Options...**", quote=True)
-    try:
-        # Use simple check first
-        opts = {
-            'quiet': True, 'noprogress': True,
-            'extractor_args': {'youtube': {'player_client': ['android']}},
-        }
-        info = await asyncio.to_thread(run_sync_info, opts, url)
-        title = info.get('title', 'Video')
+    msg = await message.reply_text("🔎 **Unlocking Link (iPhone Mode)...**", quote=True)
+    
+    # Client Strategy: iOS -> TV
+    strategies = [
+        {'client': 'ios', 'ua': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'},
+        {'client': 'tv', 'ua': 'Mozilla/5.0 (Chromecast; Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Safari/537.36'}
+    ]
 
+    info = None
+    last_error = ""
+
+    for strat in strategies:
+        try:
+            opts = {
+                'quiet': True, 'noprogress': True, 'logger': silent_logger,
+                'cookiefile': None, # Ensure NO COOKIES
+                'extractor_args': {'youtube': {'player_client': [strat['client']]}},
+                'user_agent': strat['ua']
+            }
+            info = await asyncio.to_thread(run_sync_info, opts, url)
+            if info: break
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+    if not info:
+        await msg.edit_text(f"⚠️ **Failed to bypass YouTube block.**\n\nError: {last_error}\n\n*Note: Ensure cookies.txt is DELETED.*")
+        return
+
+    try:
+        title = info.get('title', 'Video')
         resolutions = [2160, 1440, 1080, 720, 480, 360, 240, 144]
         buttons_list = []
         for res in resolutions:
@@ -174,7 +158,7 @@ async def show_options(message, url):
             quote=True
         )
     except Exception as e:
-        await msg.edit_text(f"⚠️ **Error:** {e}\n\nNOTE: If you have cookies.txt in GitHub, PLEASE DELETE IT.")
+        await msg.edit_text(f"⚠️ Error: {e}")
 
 # --- HELPERS ---
 def run_sync_download(opts, url):
@@ -220,34 +204,45 @@ async def callback(client, query):
         res = data.split("_")[1]; display_res = f"{res}p"
         ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'; ext = 'mp4'
 
-    # --- OAUTH2 MODE (THE ULTIMATE FIX) ---
-    # We pass 'username': 'oauth2' to make yt-dlp ask for login if blocked.
-    # The custom logger will catch the code and send it to you.
-    custom_logger = OAuthLogger(app, user_id, status_msg)
+    # --- DUAL CLIENT STRATEGY (iOS -> TV) ---
+    strategies = [
+        {'client': 'ios', 'ua': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'},
+        {'client': 'tv', 'ua': 'Mozilla/5.0 (Chromecast; Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Safari/537.36'}
+    ]
     
-    opts = {
-        'format': ydl_fmt, 
-        'outtmpl': f'{filename}.%(ext)s',
-        'quiet': False, 'noprogress': True, 
-        'logger': custom_logger,  # <--- LOGGER CONNECTED HERE
-        'username': 'oauth2',     # <--- TRIGGERS GOOGLE LOGIN IF BLOCKED
-        'writethumbnail': True, 'concurrent_fragment_downloads': 5, 
-        'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-    }
-    
-    if ext == "mp4": opts['merge_output_format'] = 'mp4'
-    else: opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
-
     final_path = f"{filename}.{ext}"
     thumb_path = f"{filename}.jpg" 
+    success = False
 
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING {display_res}...**\n(If it gets stuck, check for a Login Code below!)")
+        await status_msg.edit_text(f"📥 **DOWNLOADING {display_res}...**\n(Using iPhone/TV Bypass...)\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
         
-        await asyncio.to_thread(run_sync_download, opts, url)
-        
-        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
-            raise Exception("Download Failed")
+        for strat in strategies:
+            try:
+                opts = {
+                    'format': ydl_fmt, 
+                    'outtmpl': f'{filename}.%(ext)s',
+                    'quiet': True, 'noprogress': True, 'logger': silent_logger, 
+                    'cookiefile': None, # STRICTLY NO COOKIES
+                    'extractor_args': {'youtube': {'player_client': [strat['client']]}},
+                    'user_agent': strat['ua'],
+                    'writethumbnail': True, 'concurrent_fragment_downloads': 5, 
+                    'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
+                }
+                
+                if ext == "mp4": opts['merge_output_format'] = 'mp4'
+                else: opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
+                
+                await asyncio.to_thread(run_sync_download, opts, url)
+                
+                if os.path.exists(final_path) and os.path.getsize(final_path) > 0:
+                    success = True
+                    break # Success!
+            except:
+                continue
+
+        if not success:
+            raise Exception("All bypass methods (iOS/TV) failed. Server is heavily blocked.")
 
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
@@ -264,10 +259,7 @@ async def callback(client, query):
         await status_msg.delete()
 
     except Exception as e:
-        if "Sign in" in str(e):
-             await status_msg.edit_text("⚠️ **Login Timeout:** You didn't enter the code in time. Try again.")
-        else:
-             await status_msg.edit_text(f"⚠️ Error: {e}")
+        await status_msg.edit_text(f"⚠️ Error: {e}")
     finally:
         if os.path.exists(final_path): os.remove(final_path)
         if os.path.exists(thumb_path): os.remove(thumb_path)
