@@ -23,7 +23,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v20.0 - OAuth2 Mode)"
+    return "✅ Bot is Running (v21.0 - Full Auth Mode)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -51,23 +51,21 @@ class OAuthLogger:
     def error(self, msg): self.check_auth(msg)
 
     def check_auth(self, msg):
-        # YouTube sends a message like: "To give yt-dlp access... go to google.com/device and enter code ABCD-1234"
+        # Capture the Google Device Code
         if "google.com/device" in msg and not self.code_detected:
             self.code_detected = True
             try:
-                # Find the code (e.g., R45G-H78J)
+                # Regex to find code like "R45G-H78J"
                 match = re.search(r'code\s+([A-Z0-9-]+)', msg)
                 if match:
                     code = match.group(1)
-                    # Send alert to user
                     text = (
-                        f"⚠️ **YOUTUBE LOGIN REQUIRED**\n\n"
-                        f"YouTube blocked the server. Please authorize it manually:\n\n"
-                        f"1️⃣ Tap here: [google.com/device](https://www.google.com/device)\n"
+                        f"⚠️ **YOUTUBE LOGIN REQUIRED** ⚠️\n\n"
+                        f"Server blocked! Authorize it to continue:\n"
+                        f"1️⃣ Open: [google.com/device](https://www.google.com/device)\n"
                         f"2️⃣ Enter Code: `{code}`\n\n"
-                        f"⏳ **Waiting for you... (Don't close this)**"
+                        f"⏳ **Waiting for authorization...**"
                     )
-                    # Send update to Telegram safely
                     self.client.loop.create_task(
                         self.client.edit_message_text(
                             chat_id=self.chat_id, 
@@ -76,8 +74,8 @@ class OAuthLogger:
                             disable_web_page_preview=True
                         )
                     )
-            except Exception as e:
-                print(f"Logger Error: {e}")
+            except:
+                pass
 
 # --- 4. SETUP CLIENT ---
 logging.basicConfig(level=logging.INFO)
@@ -105,8 +103,8 @@ async def progress(current, total, message, start_time, status_text):
 async def start(client, message):
     welcome_text = (
         "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n\n"
-        "**NOTE:** If I get blocked, I will send you a login code.\n"
-        "You must enter it in Google to verify you are human."
+        "**NOTE:** If prompted, please enter the login code in Google.\n"
+        "This unlocks the bot permanently for this session."
     )
     await message.reply_text(welcome_text)
 
@@ -120,11 +118,21 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
+# --- 7. SHOW OPTIONS (WITH AUTH SUPPORT) ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Scanning...**", quote=True)
+    msg = await message.reply_text("🔎 **Scanning Video...**", quote=True)
+    
+    # Use OAuth Logger HERE too (Critical Fix)
+    custom_logger = OAuthLogger(app, message.chat.id, msg.id)
+
+    opts = {
+        'quiet': False, # Must be False to see logs
+        'logger': custom_logger,
+        'username': 'oauth2', # Trigger Login if blocked
+        'extractor_args': {'youtube': {'player_client': ['android']}},
+    }
+
     try:
-        # Simple scan first
-        opts = {'quiet': True, 'extractor_args': {'youtube': {'player_client': ['android']}}}
         info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
 
@@ -140,8 +148,12 @@ async def show_options(message, url):
 
         await msg.delete()
         await message.reply_text(f"🎬 **{title}**", reply_markup=InlineKeyboardMarkup(keyboard), quote=True)
+    
     except Exception as e:
-        await msg.edit_text(f"⚠️ **Scan Failed:** {e}")
+        if "Sign in" in str(e):
+            await msg.edit_text("❌ **Login Required:** Please follow the steps above (Code) to unlock.")
+        else:
+            await msg.edit_text(f"⚠️ **Error:** {e}")
 
 def run_sync_download(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl: return ydl.download([url])
@@ -151,6 +163,7 @@ def run_sync_info(opts, url):
 
 url_store = {}
 
+# --- 8. DOWNLOAD HANDLER (WITH AUTH SUPPORT) ---
 @app.on_callback_query()
 async def callback(client, query):
     data = query.data
@@ -175,15 +188,15 @@ async def callback(client, query):
         res = data.split("_")[1]
         ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best/best'; ext = 'mp4'
 
-    # --- OAUTH2 ACTIVATION ---
+    # Attach Logger again for Download Phase
     custom_logger = OAuthLogger(app, query.message.chat.id, status_msg.id)
     
     opts = {
         'format': ydl_fmt,
         'outtmpl': f'{filename}.%(ext)s',
         'quiet': False, 
-        'logger': custom_logger,  # Catches the code
-        'username': 'oauth2',     # Forces Login if needed
+        'logger': custom_logger,
+        'username': 'oauth2', 
         'writethumbnail': True,
         'concurrent_fragment_downloads': 5,
         'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
@@ -198,7 +211,7 @@ async def callback(client, query):
     thumb_path = f"{filename}.jpg"
 
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(If stuck, check for login code!)")
+        await status_msg.edit_text(f"📥 **DOWNLOADING...**")
         await asyncio.to_thread(run_sync_download, opts, url)
         
         await status_msg.edit_text("☁️ **UPLOADING...**")
@@ -213,7 +226,7 @@ async def callback(client, query):
         await status_msg.delete()
     except Exception as e:
         if "Sign in" in str(e):
-            await status_msg.edit_text("❌ **Login Timed Out.** Please try again and enter the code quickly.")
+            await status_msg.edit_text("❌ **Login Timed Out / Failed.**")
         else:
             await status_msg.edit_text(f"⚠️ Error: {e}")
     finally:
