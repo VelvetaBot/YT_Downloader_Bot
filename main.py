@@ -23,7 +23,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v14.0 - All Buttons + Auto Shift)"
+    return "✅ Bot is Running (v15.0 - Android Only Mode)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -33,7 +33,7 @@ t = threading.Thread(target=run_web_server)
 t.daemon = True
 t.start()
 
-# --- 3. THE SILENCER (FIXED) ---
+# --- 3. THE SILENCER ---
 class UniversalFakeLogger:
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
@@ -94,21 +94,20 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 8. SHOW ALL OPTIONS (HARDCODED) ---
+# --- 8. SHOW ALL OPTIONS ---
 async def show_options(message, url):
     msg = await message.reply_text("🔎 **Generating Buttons...**", quote=True)
     try:
-        # Get Title Only
+        # v15.0 FIX: Use ONLY Android client (Avoids 'Sign In' error often)
         opts = {
             'quiet': True, 'noprogress': True, 'logger': silent_logger,
             'cookiefile': 'cookies.txt',
-            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+            'extractor_args': {'youtube': {'player_client': ['android']}}, # Removed 'web'
+            'user_agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
         }
         info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
 
-        # SHOW ALL RESOLUTIONS (Forcefully)
-        # The bot will auto-shift if a resolution is missing.
         resolutions = [2160, 1440, 1080, 720, 480, 360, 240, 144]
         
         buttons_list = []
@@ -117,13 +116,11 @@ async def show_options(message, url):
             elif res == 1440: label = "🎬 2K (1440p)"
             else: label = f"🎬 {res}p"
             
-            # 144p Warning Trigger
             if res == 144:
                 buttons_list.append(InlineKeyboardButton(label, callback_data="warn_144"))
             else:
                 buttons_list.append(InlineKeyboardButton(label, callback_data=f"video_{res}"))
         
-        # Grid Layout
         keyboard = []
         temp_row = []
         for btn in buttons_list:
@@ -155,7 +152,7 @@ def run_sync_info(opts, url):
 
 url_store = {}
 
-# --- 9. HANDLE CALLBACKS (AUTO-SHIFT LOGIC) ---
+# --- 9. HANDLE CALLBACKS ---
 @app.on_callback_query()
 async def callback(client, query):
     data = query.data
@@ -169,7 +166,6 @@ async def callback(client, query):
     url = stored_data['url']
     original_msg_id = stored_data['msg_id']
 
-    # 144p Warning
     if data == "warn_144":
         warning_text = (
             "⚠️ **Low Quality Warning (144p)**\n\n"
@@ -197,13 +193,8 @@ async def callback(client, query):
         ext = 'mp3'
         display_res = "Audio"
     else:
-        # THE MAGIC LOGIC: height <= requested
-        # If user asks for 2160 (4K) but video only has 1080,
-        # 'height<=2160' tells yt-dlp to grab the BEST video that is NOT bigger than 2160.
-        # So it automatically grabs 1080. This solves the error.
         res = data.split("_")[1]
         display_res = f"{res}p"
-        
         ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'
         ext = 'mp4'
 
@@ -212,7 +203,8 @@ async def callback(client, query):
         'outtmpl': f'{filename}.%(ext)s',
         'quiet': True, 'noprogress': True, 'logger': silent_logger, 
         'cookiefile': 'cookies.txt', 
-        'extractor_args': {'youtube': {'player_client': ['android', 'web']}}, 
+        'extractor_args': {'youtube': {'player_client': ['android']}}, # Android Only
+        'user_agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
         'writethumbnail': True, 'concurrent_fragment_downloads': 5, 
         'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
     }
@@ -231,7 +223,7 @@ async def callback(client, query):
             if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
                 raise Exception("Empty File")
         except Exception as e:
-            # Last Resort Fallback
+            # Fallback
             await status_msg.edit_text(f"⚠️ **Standard Download...**")
             opts['format'] = 'best'
             opts['cookiefile'] = None
