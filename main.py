@@ -19,8 +19,6 @@ CHANNEL_LINK = "https://t.me/Velvetabots"
 DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"   
 
 # --- 2. THE SILENCER (ONLY FOR YT-DLP) ---
-# We keep this class, but we DO NOT apply it to sys.stdout anymore.
-# We only pass it to yt-dlp to stop the specific download errors.
 class UniversalFakeLogger:
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
@@ -34,7 +32,7 @@ class UniversalFakeLogger:
 silent_logger = UniversalFakeLogger()
 
 # --- 3. SETUP CLIENT ---
-# Enable logging so we can see why it fails
+# Enable logging so we can see real errors in Render logs
 logging.basicConfig(level=logging.INFO)
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=True)
 
@@ -60,6 +58,7 @@ async def progress(current, total, message, start_time, status_text):
 async def group_moderation(client, message):
     if not message.text: return
     
+    # 1. Check if User is Admin (If Admin, Allow EVERYTHING)
     try:
         member = await client.get_chat_member(message.chat.id, message.from_user.id)
         if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR]:
@@ -68,12 +67,23 @@ async def group_moderation(client, message):
         pass 
 
     text = message.text.lower()
-    allowed_domains = ["youtube.com", "youtu.be", "twitter.com", "x.com", "instagram.com", "tiktok.com"]
+    
+    # 2. Allowed Domains
+    allowed_domains = [
+        "youtube.com", "youtu.be",  # YouTube
+        "twitter.com", "x.com",     # Twitter/X
+        "instagram.com",            # Instagram
+        "tiktok.com"                # TikTok
+    ]
+
     has_allowed_link = any(domain in text for domain in allowed_domains)
 
+    # 3. LOGIC: If NO allowed link is found -> DELETE
     if not has_allowed_link:
-        try: await message.delete()
-        except: pass 
+        try:
+            await message.delete()
+        except:
+            pass 
 
 # --- 6. HELPER: THREADED DOWNLOAD ---
 def run_sync_download(opts, url):
@@ -98,7 +108,7 @@ async def start(client, message):
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
 
-# --- 8. HANDLE DOWNLOADS ---
+# --- 8. HANDLE DOWNLOADS (ONLY YOUTUBE) ---
 @app.on_message(filters.text & ~filters.command("start"), group=2)
 async def handle_link(client, message):
     url = message.text
@@ -121,7 +131,7 @@ async def show_options(message, url):
     try:
         opts = {
             'quiet': True, 'noprogress': True, 
-            'logger': silent_logger, # Only silence the downloader, NOT the system
+            'logger': silent_logger, 
             'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         }
@@ -174,7 +184,7 @@ async def callback(client, query):
         'format': ydl_fmt, 
         'outtmpl': f'{filename}.%(ext)s',
         'quiet': True, 'noprogress': True, 
-        'logger': silent_logger, # Only silence the downloader
+        'logger': silent_logger, 
         'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'writethumbnail': True, 
@@ -223,4 +233,12 @@ async def callback(client, query):
         if "NoneType" in str(e) or "FakeWriter" in str(e) or "UniversalFakeLogger" in str(e): pass
         else: await status_msg.edit_text(f"⚠️ Error: {e}")
     finally:
-        if os.path.exists(
+        if os.path.exists(final_path):
+            os.remove(final_path)
+        if os.path.exists(thumb_path):
+            os.remove(thumb_path)
+
+if __name__ == '__main__':
+    keep_alive()
+    print("✅ Bot Started (Syntax Fixed)")
+    app.run()
