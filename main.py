@@ -23,7 +23,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v13.0 - Format Safe Mode)"
+    return "✅ Bot is Running (v14.0 - All Buttons + Auto Shift)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -33,7 +33,7 @@ t = threading.Thread(target=run_web_server)
 t.daemon = True
 t.start()
 
-# --- 3. THE SILENCER (CRITICAL FIX) ---
+# --- 3. THE SILENCER (FIXED) ---
 class UniversalFakeLogger:
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
@@ -75,8 +75,8 @@ async def start(client, message):
         "I can download videos **up to 2GB!** 🚀\n\n"
         "**How to use:**\n"
         "1️⃣ Send a YouTube link 🔗\n"
-        "2️⃣ I will list **ALL Available Qualities** ✨\n"
-        "3️⃣ Select and Download! 📥"
+        "2️⃣ Select Quality (4K to 144p) ✨\n"
+        "3️⃣ I will handle the rest! 📥"
     )
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -94,34 +94,36 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 8. SCAN & SHOW OPTIONS ---
+# --- 8. SHOW ALL OPTIONS (HARDCODED) ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Scanning Resolutions...**", quote=True)
+    msg = await message.reply_text("🔎 **Generating Buttons...**", quote=True)
     try:
+        # Get Title Only
         opts = {
-            'quiet': True, 'noprogress': True, 'logger': silent_logger, 
-            'cookiefile': 'cookies.txt', 
+            'quiet': True, 'noprogress': True, 'logger': silent_logger,
+            'cookiefile': 'cookies.txt',
             'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         }
-        
         info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
-        formats = info.get('formats', [])
 
-        available_res = set()
-        for f in formats:
-            if f.get('vcodec') != 'none' and f.get('height'):
-                available_res.add(f['height'])
-        
-        sorted_res = sorted(list(available_res), reverse=True)
+        # SHOW ALL RESOLUTIONS (Forcefully)
+        # The bot will auto-shift if a resolution is missing.
+        resolutions = [2160, 1440, 1080, 720, 480, 360, 240, 144]
         
         buttons_list = []
-        for res in sorted_res:
+        for res in resolutions:
+            if res == 2160: label = "🎬 4K (2160p)"
+            elif res == 1440: label = "🎬 2K (1440p)"
+            else: label = f"🎬 {res}p"
+            
+            # 144p Warning Trigger
             if res == 144:
-                buttons_list.append(InlineKeyboardButton(f"🎬 {res}p", callback_data="warn_144"))
+                buttons_list.append(InlineKeyboardButton(label, callback_data="warn_144"))
             else:
-                buttons_list.append(InlineKeyboardButton(f"🎬 {res}p", callback_data=f"video_{res}"))
+                buttons_list.append(InlineKeyboardButton(label, callback_data=f"video_{res}"))
         
+        # Grid Layout
         keyboard = []
         temp_row = []
         for btn in buttons_list:
@@ -136,7 +138,7 @@ async def show_options(message, url):
 
         await msg.delete()
         await message.reply_text(
-            f"🎬 **{title}**\n\n👇 **Select Quality:**", 
+            f"🎬 **{title}**\n\n👇 **Select Preferred Quality:**\n(If selected quality is missing, I will download the next best one!)", 
             reply_markup=InlineKeyboardMarkup(keyboard), 
             quote=True
         )
@@ -153,7 +155,7 @@ def run_sync_info(opts, url):
 
 url_store = {}
 
-# --- 9. HANDLE CALLBACKS ---
+# --- 9. HANDLE CALLBACKS (AUTO-SHIFT LOGIC) ---
 @app.on_callback_query()
 async def callback(client, query):
     data = query.data
@@ -167,10 +169,12 @@ async def callback(client, query):
     url = stored_data['url']
     original_msg_id = stored_data['msg_id']
 
+    # 144p Warning
     if data == "warn_144":
         warning_text = (
             "⚠️ **Low Quality Warning (144p)**\n\n"
-            "This video will be blurry. Proceed?\n"
+            "This video will be blurry. Good for saving data.\n\n"
+            "**Confirm?**"
         )
         buttons = [
             [InlineKeyboardButton("✅ Yes", callback_data="video_144")],
@@ -191,9 +195,15 @@ async def callback(client, query):
     if data == "audio_mp3":
         ydl_fmt = 'bestaudio/best'
         ext = 'mp3'
+        display_res = "Audio"
     else:
-        # THE FIX: Use '<=' instead of '='. This is MUCH safer.
+        # THE MAGIC LOGIC: height <= requested
+        # If user asks for 2160 (4K) but video only has 1080,
+        # 'height<=2160' tells yt-dlp to grab the BEST video that is NOT bigger than 2160.
+        # So it automatically grabs 1080. This solves the error.
         res = data.split("_")[1]
+        display_res = f"{res}p"
+        
         ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'
         ext = 'mp4'
 
@@ -214,15 +224,15 @@ async def callback(client, query):
     thumb_path = f"{filename}.jpg" 
 
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
+        await status_msg.edit_text(f"📥 **DOWNLOADING {display_res}...**\n(Adjusting if needed...)\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
         
         try:
             await asyncio.to_thread(run_sync_download, opts, url)
             if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
                 raise Exception("Empty File")
         except Exception as e:
-            # SAFETY FALLBACK: If specific quality fails, just get 'best'
-            await status_msg.edit_text(f"⚠️ **Optimizing Quality...**")
+            # Last Resort Fallback
+            await status_msg.edit_text(f"⚠️ **Standard Download...**")
             opts['format'] = 'best'
             opts['cookiefile'] = None
             if 'extractor_args' in opts: del opts['extractor_args']
