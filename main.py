@@ -22,7 +22,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Running (v22.0 - Client Rotation)"
+    return "✅ Bot is Running (v23.0 - Cookies Mode)"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -70,12 +70,9 @@ async def progress(current, total, message, start_time, status_text):
 @app.on_message(filters.command("start"))
 async def start(client, message):
     welcome_text = (
-        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n"
-        "I can download videos **up to 2GB!** 🚀\n\n"
-        "**How to use:**\n"
-        "1️⃣ Send a YouTube link 🔗\n"
-        "2️⃣ Select Quality (4K to 144p) ✨\n"
-        "3️⃣ I will use multiple disguises to download! 📥"
+        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n\n"
+        "**System Status:** Cookies Mode Active 🍪\n"
+        "I am ready to download!"
     )
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -90,35 +87,25 @@ async def handle_link(client, message):
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
-# --- 7. SHOW OPTIONS (TRY MULTIPLE CLIENTS) ---
+# --- 7. SHOW OPTIONS (COOKIES FOCUSED) ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Scanning (Rotating IPs)...**", quote=True)
+    msg = await message.reply_text("🔎 **Scanning (Using Cookies)...**", quote=True)
     
-    # We attempt scanning with different clients until one works
-    clients = ['ios', 'android', 'tv', 'web']
-    info = None
-    last_error = ""
-
-    for client_name in clients:
-        try:
-            opts = {
-                'quiet': True, 
-                'noprogress': True, 
-                'logger': silent_logger,
-                'extractor_args': {'youtube': {'player_client': [client_name]}},
-            }
-            info = await asyncio.to_thread(run_sync_info, opts, url)
-            if info: break # Stop if successful
-        except Exception as e:
-            last_error = str(e)
-            continue
-
-    if not info:
-        await msg.edit_text(f"⚠️ **Scan Failed.**\nYouTube blocked all attempts.\nError: {last_error}")
-        return
+    # We use 'web' client because it works best with cookies.txt
+    # We remove 'oauth2' which caused the previous error.
+    opts = {
+        'quiet': True, 
+        'noprogress': True, 
+        'logger': silent_logger,
+        'cookiefile': 'cookies.txt', # MUST BE PRESENT
+        'extractor_args': {'youtube': {'player_client': ['web']}}, 
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    }
 
     try:
+        info = await asyncio.to_thread(run_sync_info, opts, url)
         title = info.get('title', 'Video')
+
         resolutions = [2160, 1440, 1080, 720, 480, 360, 240, 144]
         buttons_list = []
         for res in resolutions:
@@ -133,7 +120,11 @@ async def show_options(message, url):
         await message.reply_text(f"🎬 **{title}**", reply_markup=InlineKeyboardMarkup(keyboard), quote=True)
     
     except Exception as e:
-        await msg.edit_text(f"⚠️ **Error:** {e}")
+        error_msg = str(e)
+        if "cookies" in error_msg.lower():
+             await msg.edit_text(f"⚠️ **Cookie Error:**\nPlease make sure `cookies.txt` is uploaded to GitHub and is valid.\nError: {e}")
+        else:
+             await msg.edit_text(f"⚠️ **Scan Error:** {e}")
 
 def run_sync_download(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl: return ydl.download([url])
@@ -143,7 +134,7 @@ def run_sync_info(opts, url):
 
 url_store = {}
 
-# --- 8. DOWNLOAD HANDLER (CLIENT ROTATION) ---
+# --- 8. DOWNLOAD HANDLER ---
 @app.on_callback_query()
 async def callback(client, query):
     data = query.data
@@ -168,45 +159,35 @@ async def callback(client, query):
         res = data.split("_")[1]
         ydl_fmt = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'; ext = 'mp4'
 
-    # ROTATION STRATEGY: Try ios -> tv -> android -> web
-    clients_to_try = ['ios', 'tv', 'android', 'web']
-    success = False
+    final_path = f"{filename}.{ext}"
+    thumb_path = f"{filename}.jpg"
+
+    opts = {
+        'format': ydl_fmt,
+        'outtmpl': f'{filename}.%(ext)s',
+        'quiet': True, 
+        'noprogress': True, 
+        'logger': silent_logger,
+        'cookiefile': 'cookies.txt', # CRITICAL
+        'extractor_args': {'youtube': {'player_client': ['web']}},
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'writethumbnail': True,
+        'concurrent_fragment_downloads': 5,
+        'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
+    }
+    
+    if ext == "mp3": 
+        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
+    else:
+        opts['merge_output_format'] = 'mp4'
 
     try:
-        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(Trying multiple methods...)")
+        await status_msg.edit_text(f"📥 **DOWNLOADING...**\n(Using Auth Cookies)")
         
-        final_path = f"{filename}.{ext}"
-        thumb_path = f"{filename}.jpg"
-
-        for client_name in clients_to_try:
-            try:
-                opts = {
-                    'format': ydl_fmt,
-                    'outtmpl': f'{filename}.%(ext)s',
-                    'quiet': True, 
-                    'noprogress': True, 
-                    'logger': silent_logger,
-                    'extractor_args': {'youtube': {'player_client': [client_name]}},
-                    'writethumbnail': True,
-                    'concurrent_fragment_downloads': 5,
-                    'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-                }
-                
-                if ext == "mp3": 
-                    opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'})
-                else:
-                    opts['merge_output_format'] = 'mp4'
-                
-                await asyncio.to_thread(run_sync_download, opts, url)
-                
-                if os.path.exists(final_path) and os.path.getsize(final_path) > 0:
-                    success = True
-                    break # Success!
-            except:
-                continue # Try next client
-
-        if not success:
-            raise Exception("Server IP is blocked by YouTube.")
+        await asyncio.to_thread(run_sync_download, opts, url)
+        
+        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+            raise Exception("Download Failed (Empty File). Check Cookies.")
 
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
