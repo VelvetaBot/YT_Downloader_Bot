@@ -18,7 +18,7 @@ BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
 CHANNEL_LINK = "https://t.me/Velvetabots"              
 DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"   
 
-# --- 2. INTERNAL WEB SERVER (Fixes 'Exited Early' Error) ---
+# --- 2. INTERNAL WEB SERVER (Keeps Bot Alive) ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
@@ -26,11 +26,10 @@ def home():
     return "✅ Bot is Online & Running!"
 
 def run_web_server():
-    # Render sets the PORT environment variable
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host='0.0.0.0', port=port)
 
-# Start Web Server in Background
+# Start Web Server in Background Thread
 t = threading.Thread(target=run_web_server)
 t.daemon = True
 t.start()
@@ -41,13 +40,13 @@ class UniversalFakeLogger:
     def flush(self, *args, **kwargs): pass
     def isatty(self): return False
 
-# Redirect stdout but KEEP stderr (so we can see crashes if they happen)
+# Redirect stdout to silence logs
 sys.stdout = UniversalFakeLogger()
 
 # --- 4. SETUP CLIENT ---
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=True)
 
-# --- 5. RELIABLE PROGRESS BAR ---
+# --- 5. PROGRESS BAR ---
 async def progress(current, total, message, start_time, status_text):
     try:
         now = time.time()
@@ -82,19 +81,4 @@ async def group_moderation(client, message):
         return
 
     text = content.lower()
-    allowed_domains = ["youtube.com", "youtu.be", "twitter.com", "x.com", "instagram.com", "tiktok.com", "facebook.com", "fb.watch"]
-    
-    if not any(domain in text for domain in allowed_domains):
-        try: await message.delete()
-        except: pass
-
-# --- 7. HELPER FUNCTIONS ---
-def run_sync_download(opts, url):
-    with yt_dlp.YoutubeDL(opts) as ydl: return ydl.download([url])
-
-def run_sync_info(opts, url):
-    with yt_dlp.YoutubeDL(opts) as ydl: return ydl.extract_info(url, download=False)
-
-# --- 8. START COMMAND ---
-@app.on_message(filters.command("start"))
-async def
+    allowed_domains = ["youtube.com", "youtu.be", "twitter.com", "x.com", "instagram
