@@ -13,13 +13,14 @@ import yt_dlp
 # --- 1. CONFIGURATION ---
 API_ID = 11253846                   
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
-BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
+# 👇 కింద ఉన్న లైన్‌లో మీ కొత్త టోకెన్ పేస్ట్ చేయండి 👇
+BOT_TOKEN = "8034075115:AAEW-7eN8fzd31acrcvNwCYwKT2__c6b_ss" 
 
 # LINKS
 CHANNEL_LINK = "https://t.me/Velvetabots"              
 DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"   
 
-# --- 2. INTERNAL WEB SERVER (Keeps App Alive) ---
+# --- 2. INTERNAL WEB SERVER ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
@@ -30,12 +31,11 @@ def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host='0.0.0.0', port=port)
 
-# Start Web Server in Background
 t = threading.Thread(target=run_web_server)
 t.daemon = True
 t.start()
 
-# --- 3. YT-DLP SILENCER (Only for Downloads) ---
+# --- 3. YT-DLP SILENCER ---
 class UniversalFakeLogger:
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
@@ -46,12 +46,10 @@ class UniversalFakeLogger:
     def info(self, *args, **kwargs): pass
     def critical(self, *args, **kwargs): pass
 
-# We only use this for yt_dlp, NOT for the main app
 yt_logger = UniversalFakeLogger()
 
 # --- 4. SETUP CLIENT ---
-# ipv6=False is safer for Render
-logging.basicConfig(level=logging.INFO) # Enable logs to see errors
+logging.basicConfig(level=logging.INFO)
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=False)
 
 # --- 5. PROGRESS BAR ---
@@ -129,7 +127,6 @@ async def show_options(message, url):
         return
 
     try:
-        # Use our safe logger here
         opts = {
             'quiet': True, 'noprogress': True, 'logger': yt_logger,
             'cookiefile': 'cookies.txt',
@@ -171,7 +168,6 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
     filename = f"vid_{user_id}_{int(time.time())}"
     
-    # --- FORMAT LOGIC (Safe) ---
     if data == "mp3":
         ydl_fmt = 'bestaudio/best'; ext = 'mp3'
     elif data == "1080":
