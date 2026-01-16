@@ -25,7 +25,7 @@ sys.stderr = silent_logger
 # --- 2. CONFIGURATION ---
 API_ID = 11253846                   
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
-BOT_TOKEN = "8034075115:AAG1mS-FAopJN3TykUBhMWtE6nQOlhBsKNk"
+BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
 
 # LINKS
 CHANNEL_LINK = "https://t.me/Velvetabots"              # For Start Button
@@ -51,50 +51,24 @@ async def progress(current, total, message, start_time, status_text):
     except Exception:
         pass 
 
-# --- 5. GROUP MODERATION (STRICT LINK ENFORCEMENT) ---
+# --- 5. GROUP MODERATION ---
 @app.on_message(filters.group, group=1)
 async def group_moderation(client, message):
-    # 1. ADMIN CHECK (Admins can send anything: text, images, other links)
-    try:
-        member = await client.get_chat_member(message.chat.id, message.from_user.id)
-        if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR]:
-            return # Admin message -> Do nothing (Allow)
-    except:
-        pass 
-
-    # 2. Get the content (Text or Caption)
-    # If a user sends a photo/video, we check the caption.
-    content = message.text or message.caption
-
-    # 3. IF NO TEXT/LINK (e.g., just a Sticker, or Photo without link) -> DELETE
-    if not content:
-        try:
-            await message.delete()
-        except:
-            pass
+    if not message.text: return
+    text = message.text.lower()
+    
+    # A. Delete Greetings
+    greetings = ["hi", "hello", "hlo", "welcome", "hey", "hii", "hy"]
+    if text in greetings or (len(text) < 10 and any(text.startswith(x) for x in greetings)):
+        try: await message.delete()
+        except: pass
         return
 
-    text = content.lower()
-    
-    # 4. ALLOWED DOMAINS ONLY
-    allowed_domains = [
-        "youtube.com", "youtu.be",  # YouTube
-        "twitter.com", "x.com",     # Twitter/X
-        "instagram.com",            # Instagram
-        "tiktok.com",               # TikTok
-        "facebook.com", "fb.watch"  # Facebook
-    ]
-
-    # Check if the message contains at least one allowed link
-    has_allowed_link = any(domain in text for domain in allowed_domains)
-
-    # 5. STRICT DELETE LOGIC
-    # If it does NOT have an allowed link (e.g., "Hi", "Good morning", or google.com) -> DELETE
-    if not has_allowed_link:
-        try:
-            await message.delete()
-        except:
-            pass # Bot needs "Delete Messages" permission in the group
+    # B. Delete Non-YouTube Links
+    if "http" in text:
+        if "youtube.com" not in text and "youtu.be" not in text:
+            try: await message.delete()
+            except: pass
 
 # --- 6. START COMMAND (Only Join Channel) ---
 @app.on_message(filters.command("start"))
