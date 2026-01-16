@@ -4,6 +4,7 @@ import asyncio
 import time
 import threading
 import logging
+import signal
 from flask import Flask
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -13,7 +14,7 @@ import yt_dlp
 # --- 1. CONFIGURATION ---
 API_ID = 11253846                   
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
-# 👇 కింద ఉన్న లైన్‌లో మీ కొత్త టోకెన్ పేస్ట్ చేయండి 👇
+# 👇 Paste NEW Token Here 👇
 BOT_TOKEN = "8034075115:AAEW-7eN8fzd31acrcvNwCYwKT2__c6b_ss" 
 
 # LINKS
@@ -168,6 +169,7 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
     filename = f"vid_{user_id}_{int(time.time())}"
     
+    # --- FORMAT LOGIC ---
     if data == "mp3":
         ydl_fmt = 'bestaudio/best'; ext = 'mp3'
     elif data == "1080":
@@ -228,7 +230,16 @@ async def callback(client, query):
         if os.path.exists(final_path): os.remove(final_path)
         if os.path.exists(thumb_path): os.remove(thumb_path)
 
+# --- ROBUST STARTUP ---
+def stop_signals(signum, frame):
+    print("🔴 Stopping Bot...")
+    app.stop()
+    sys.exit(0)
+
 if __name__ == '__main__':
+    signal.signal(signal.SIGINT, stop_signals)
+    signal.signal(signal.SIGTERM, stop_signals)
+    
     print("✅ System Starting...")
     try:
         app.start()
