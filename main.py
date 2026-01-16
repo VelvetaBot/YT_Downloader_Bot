@@ -3,8 +3,9 @@ import os
 import asyncio
 import time
 import threading
+import logging
 from flask import Flask
-from pyrogram import Client, filters, errors
+from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.enums import ChatMemberStatus
 import yt_dlp
@@ -18,31 +19,40 @@ BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
 CHANNEL_LINK = "https://t.me/Velvetabots"              
 DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"   
 
-# --- 2. INTERNAL WEB SERVER ---
+# --- 2. INTERNAL WEB SERVER (Keeps App Alive) ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ Bot is Online & Running!"
+    return "✅ Bot is Online!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host='0.0.0.0', port=port)
 
+# Start Web Server in Background
 t = threading.Thread(target=run_web_server)
 t.daemon = True
 t.start()
 
-# --- 3. THE SILENCER ---
+# --- 3. YT-DLP SILENCER (Only for Downloads) ---
 class UniversalFakeLogger:
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
     def isatty(self): return False
+    def debug(self, *args, **kwargs): pass
+    def warning(self, *args, **kwargs): pass
+    def error(self, *args, **kwargs): pass
+    def info(self, *args, **kwargs): pass
+    def critical(self, *args, **kwargs): pass
 
-sys.stdout = UniversalFakeLogger()
+# We only use this for yt_dlp, NOT for the main app
+yt_logger = UniversalFakeLogger()
 
 # --- 4. SETUP CLIENT ---
-app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=True)
+# ipv6=False is safer for Render
+logging.basicConfig(level=logging.INFO) # Enable logs to see errors
+app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=False)
 
 # --- 5. PROGRESS BAR ---
 async def progress(current, total, message, start_time, status_text):
@@ -78,7 +88,6 @@ async def group_moderation(client, message):
         return
 
     text = content.lower()
-    # FIXED LINE BELOW
     allowed_domains = ["youtube.com", "youtu.be", "twitter.com", "x.com", "instagram.com", "tiktok.com", "facebook.com", "fb.watch"]
     
     if not any(domain in text for domain in allowed_domains):
@@ -120,8 +129,9 @@ async def show_options(message, url):
         return
 
     try:
+        # Use our safe logger here
         opts = {
-            'quiet': True, 'noprogress': True,
+            'quiet': True, 'noprogress': True, 'logger': yt_logger,
             'cookiefile': 'cookies.txt',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         }
@@ -161,6 +171,7 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
     filename = f"vid_{user_id}_{int(time.time())}"
     
+    # --- FORMAT LOGIC (Safe) ---
     if data == "mp3":
         ydl_fmt = 'bestaudio/best'; ext = 'mp3'
     elif data == "1080":
@@ -173,7 +184,7 @@ async def callback(client, query):
     opts = {
         'format': ydl_fmt, 
         'outtmpl': f'{filename}.%(ext)s',
-        'quiet': True, 'noprogress': True,
+        'quiet': True, 'noprogress': True, 'logger': yt_logger,
         'cookiefile': 'cookies.txt',
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'writethumbnail': True, 
@@ -222,5 +233,10 @@ async def callback(client, query):
         if os.path.exists(thumb_path): os.remove(thumb_path)
 
 if __name__ == '__main__':
-    print("✅ Bot Started (v32.0 - Syntax Fixed)")
-    app.run()
+    print("✅ System Starting...")
+    try:
+        app.start()
+        print("✅ Bot Started Successfully!")
+        idle()
+    except Exception as e:
+        print(f"❌ FATAL ERROR: {e}")
