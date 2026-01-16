@@ -2,13 +2,12 @@ import sys
 import os
 import asyncio
 import time
-from pyrogram import Client, filters, errors
+from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.enums import ChatMemberStatus, ChatType
 import yt_dlp
 from keep_alive import keep_alive  
 
-# --- 1. THE UNIVERSAL SILENCER (Prevents Crashes) ---
+# --- 1. THE UNIVERSAL SILENCER ---
 class UniversalFakeLogger:
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
@@ -29,18 +28,18 @@ API_HASH = "8db4eb50f557faa9a5756e64fb74a51a"
 BOT_TOKEN = "8034075115:AAG1mS-FAopJN3TykUBhMWtE6nQOlhBsKNk"
 
 # LINKS
-CHANNEL_LINK = "https://t.me/Velvetabots"              
-DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"   
+CHANNEL_LINK = "https://t.me/Velvetabots"              # For Start Button
+DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"   # For Download Button
 
 # --- 3. SETUP CLIENT ---
-app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=True)
+app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=False)
 
 # --- 4. RELIABLE PROGRESS BAR ---
 async def progress(current, total, message, start_time, status_text):
     try:
         now = time.time()
         diff = now - start_time
-        if round(diff % 5.00) == 0 or current == total:
+        if round(diff % 8.00) == 0 or current == total:
             percentage = current * 100 / total
             filled_blocks = int(percentage / 10)
             bar = "🟩" * filled_blocks + "⬜" * (10 - filled_blocks)
@@ -52,10 +51,10 @@ async def progress(current, total, message, start_time, status_text):
     except Exception:
         pass 
 
-# --- 5. GROUP MODERATION (STRICT & SILENT) ---
+# --- 5. GROUP MODERATION (STRICT LINK ENFORCEMENT) ---
 @app.on_message(filters.group, group=1)
 async def group_moderation(client, message):
-    # 1. Check if User is Admin (If Admin, Allow EVERYTHING)
+    # 1. ADMIN CHECK (Admins can send anything: text, images, other links)
     try:
         member = await client.get_chat_member(message.chat.id, message.from_user.id)
         if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR]:
@@ -63,17 +62,21 @@ async def group_moderation(client, message):
     except:
         pass 
 
-    # If message has no text (e.g., only photo/video without caption), DELETE it
-    if not message.text:
+    # 2. Get the content (Text or Caption)
+    # If a user sends a photo/video, we check the caption.
+    content = message.text or message.caption
+
+    # 3. IF NO TEXT/LINK (e.g., just a Sticker, or Photo without link) -> DELETE
+    if not content:
         try:
             await message.delete()
         except:
             pass
         return
 
-    text = message.text.lower()
+    text = content.lower()
     
-    # 2. Allowed Domains (Twitter, FB, TikTok, YouTube, Instagram)
+    # 4. ALLOWED DOMAINS ONLY
     allowed_domains = [
         "youtube.com", "youtu.be",  # YouTube
         "twitter.com", "x.com",     # Twitter/X
@@ -82,49 +85,38 @@ async def group_moderation(client, message):
         "facebook.com", "fb.watch"  # Facebook
     ]
 
-    # Check if message contains ANY allowed link
+    # Check if the message contains at least one allowed link
     has_allowed_link = any(domain in text for domain in allowed_domains)
 
-    # 3. LOGIC: If NO allowed link is found -> DELETE
-    # If allowed link IS found -> Do nothing (Let other bots handle it)
+    # 5. STRICT DELETE LOGIC
+    # If it does NOT have an allowed link (e.g., "Hi", "Good morning", or google.com) -> DELETE
     if not has_allowed_link:
         try:
             await message.delete()
         except:
-            pass 
+            pass # Bot needs "Delete Messages" permission in the group
 
-# --- 6. HELPER: THREADED DOWNLOAD ---
-def run_sync_download(opts, url):
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        return ydl.download([url])
-
-def run_sync_info(opts, url):
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        return ydl.extract_info(url, download=False)
-
-# --- 7. START COMMAND (UPDATED) ---
+# --- 6. START COMMAND (Only Join Channel) ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    # Clean welcome message, no buttons as requested
     welcome_text = (
-        "👋 **Hello!**\n\n"
-        "Send me a YouTube link to download videos or audio.\n"
-        "I support qualities up to 1080p and 2GB files."
+        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n"
+        "I can download videos **up to 2GB!** 🚀\n\n"
+        "**How to use:**\n"
+        "1️⃣ Send a YouTube link 🔗\n"
+        "2️⃣ Select Quality ✨\n"
+        "3️⃣ Wait for the magic! 📥"
     )
-    await message.reply_text(welcome_text)
+    # RESTORED: Join Channel Button Only
+    buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
+    await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
 
-# --- 8. HANDLE DOWNLOADS (PRIVATE CHATS ONLY) ---
+# --- 7. HANDLE DOWNLOADS ---
 @app.on_message(filters.text & ~filters.command("start"), group=2)
 async def handle_link(client, message):
-    # STRICT RULE: If message is in a GROUP, Ignore it.
-    # This ensures this bot acts ONLY as a cleaner in groups, allowing other bots to reply.
-    if message.chat.type != ChatType.PRIVATE:
-        return
-
     url = message.text
     user_id = message.from_user.id
     
-    # Only process YouTube links in DM
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
@@ -135,7 +127,7 @@ async def handle_link(client, message):
 # --- SHOW OPTIONS ---
 async def show_options(message, url):
     try:
-        msg = await message.reply_text("🔎 **Processing...**", quote=True)
+        msg = await message.reply_text("🔎 **Checking Link...**", quote=True)
     except:
         return
 
@@ -145,10 +137,9 @@ async def show_options(message, url):
             'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         }
-        
-        info = await asyncio.to_thread(run_sync_info, opts, url)
-        title = info.get('title', 'Video')
-        
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            title = info.get('title', 'Video')
         await msg.delete()
         
         buttons = InlineKeyboardMarkup([
@@ -178,17 +169,17 @@ async def callback(client, query):
     original_msg_id = stored_data['msg_id']
 
     await query.message.delete()
-    status_msg = await query.message.reply_text("⏳ **STARTING...**")
+    status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
     filename = f"vid_{user_id}_{int(time.time())}"
     
     if data == "mp3":
         ydl_fmt = 'bestaudio/best'; ext = 'mp3'
     elif data == "1080":
-        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best[height<=1080]'; ext = 'mp4'
+        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]'; ext = 'mp4'
     elif data == "720":
-        ydl_fmt = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best[height<=720]'; ext = 'mp4'
+        ydl_fmt = 'bestvideo[height<=720]+bestaudio/best[height<=720]'; ext = 'mp4'
     else: 
-        ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best[height<=360]'; ext = 'mp4'
+        ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]'; ext = 'mp4'
 
     opts = {
         'format': ydl_fmt, 
@@ -198,9 +189,6 @@ async def callback(client, query):
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'writethumbnail': True, 
         'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-        'concurrent_fragment_downloads': 5, 
-        'retries': 10,
-        'fragment_retries': 10,
     }
     
     if data != "mp3":
@@ -212,14 +200,15 @@ async def callback(client, query):
     thumb_path = f"{filename}.jpg" 
 
     try:
-        await status_msg.edit_text("📥 **DOWNLOADING...**")
-        
-        await asyncio.to_thread(run_sync_download, opts, url)
+        await status_msg.edit_text("📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
 
-        await status_msg.edit_text("☁️ **UPLOADING...**")
+        await status_msg.edit_text("☁️ **UPLOADING...**\n(This supports up to 2GB!)")
         start_time = time.time()
         
-        # Removed Donate Button from here as well since you requested removal
+        # DONATE BUTTON (Only appears after download)
+        donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate / Support", url=DONATE_LINK)]])
         thumb = thumb_path if os.path.exists(thumb_path) else None
 
         if data == "mp3":
@@ -227,8 +216,9 @@ async def callback(client, query):
                 query.message.chat.id, 
                 audio=final_path, 
                 thumb=thumb,
-                caption="✅ **Downloaded successfully**", 
+                caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", 
                 reply_to_message_id=original_msg_id, 
+                reply_markup=donate_btn,
                 progress=progress, 
                 progress_args=(status_msg, start_time, "☁️ **UPLOADING AUDIO...**")
             )
@@ -237,9 +227,10 @@ async def callback(client, query):
                 query.message.chat.id, 
                 video=final_path, 
                 thumb=thumb,
-                caption="✅ **Downloaded successfully**", 
+                caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", 
                 supports_streaming=True, 
                 reply_to_message_id=original_msg_id, 
+                reply_markup=donate_btn,
                 progress=progress, 
                 progress_args=(status_msg, start_time, "☁️ **UPLOADING VIDEO...**")
             )
@@ -255,5 +246,5 @@ async def callback(client, query):
 
 if __name__ == '__main__':
     keep_alive()
-    print("✅ Bot Started (Strict Mode + Async Fix)")
+    print("✅ Bot Started (Start=Join, Finish=Donate)")
     app.run()
