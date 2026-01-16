@@ -2,40 +2,52 @@ import sys
 import os
 import asyncio
 import time
+import threading
+from flask import Flask
 from pyrogram import Client, filters, errors
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.enums import ChatMemberStatus
 import yt_dlp
-from keep_alive import keep_alive  
 
-# --- 1. THE UNIVERSAL SILENCER (Prevents Crashes) ---
-class UniversalFakeLogger:
-    def write(self, *args, **kwargs): pass
-    def flush(self, *args, **kwargs): pass
-    def isatty(self): return False
-    def debug(self, *args, **kwargs): pass
-    def warning(self, *args, **kwargs): pass
-    def error(self, *args, **kwargs): pass
-    def info(self, *args, **kwargs): pass
-    def critical(self, *args, **kwargs): pass
-
-silent_logger = UniversalFakeLogger()
-sys.stdout = silent_logger
-sys.stderr = silent_logger
-
-# --- 2. CONFIGURATION ---
+# --- 1. CONFIGURATION ---
 API_ID = 11253846                   
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
-BOT_TOKEN = "8034075115:AAG1mS-FAopJN3TykUBhMWtE6nQOlhBsKNk"
+BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
 
 # LINKS
 CHANNEL_LINK = "https://t.me/Velvetabots"              
 DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"   
 
-# --- 3. SETUP CLIENT ---
+# --- 2. INTERNAL WEB SERVER (Fixes 'Exited Early' Error) ---
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    return "✅ Bot is Online & Running!"
+
+def run_web_server():
+    # Render sets the PORT environment variable
+    port = int(os.environ.get("PORT", 8080))
+    web_app.run(host='0.0.0.0', port=port)
+
+# Start Web Server in Background
+t = threading.Thread(target=run_web_server)
+t.daemon = True
+t.start()
+
+# --- 3. THE SILENCER (Prevents Log Spam) ---
+class UniversalFakeLogger:
+    def write(self, *args, **kwargs): pass
+    def flush(self, *args, **kwargs): pass
+    def isatty(self): return False
+
+# Redirect stdout but KEEP stderr (so we can see crashes if they happen)
+sys.stdout = UniversalFakeLogger()
+
+# --- 4. SETUP CLIENT ---
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=True)
 
-# --- 4. RELIABLE PROGRESS BAR ---
+# --- 5. RELIABLE PROGRESS BAR ---
 async def progress(current, total, message, start_time, status_text):
     try:
         now = time.time()
@@ -52,9 +64,10 @@ async def progress(current, total, message, start_time, status_text):
     except Exception:
         pass 
 
-# --- 5. GROUP MODERATION ---
+# --- 6. GROUP MODERATION (STRICT) ---
 @app.on_message(filters.group, group=1)
 async def group_moderation(client, message):
+    # Admin Check
     try:
         member = await client.get_chat_member(message.chat.id, message.from_user.id)
         if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR]:
@@ -64,132 +77,24 @@ async def group_moderation(client, message):
 
     content = message.text or message.caption
     if not content:
-        try:
-            await message.delete()
-        except:
-            pass
+        try: await message.delete()
+        except: pass
         return
 
     text = content.lower()
     allowed_domains = ["youtube.com", "youtu.be", "twitter.com", "x.com", "instagram.com", "tiktok.com", "facebook.com", "fb.watch"]
     
     if not any(domain in text for domain in allowed_domains):
-        try:
-            await message.delete()
-        except:
-            pass
+        try: await message.delete()
+        except: pass
 
-# --- 6. HELPER: THREADED DOWNLOAD ---
+# --- 7. HELPER FUNCTIONS ---
 def run_sync_download(opts, url):
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        return ydl.download([url])
+    with yt_dlp.YoutubeDL(opts) as ydl: return ydl.download([url])
 
 def run_sync_info(opts, url):
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        return ydl.extract_info(url, download=False)
+    with yt_dlp.YoutubeDL(opts) as ydl: return ydl.extract_info(url, download=False)
 
-# --- 7. START COMMAND ---
+# --- 8. START COMMAND ---
 @app.on_message(filters.command("start"))
-async def start(client, message):
-    welcome_text = "🌟 **Welcome to Velveta Downloader!** 🌟\nSend a YouTube link to start! 📥"
-    buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
-    await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
-
-# --- 8. HANDLE DOWNLOADS ---
-@app.on_message(filters.text & ~filters.command("start"), group=2)
-async def handle_link(client, message):
-    url = message.text
-    user_id = message.from_user.id
-    
-    if "youtube.com" not in url and "youtu.be" not in url:
-        return
-
-    global url_store
-    url_store[user_id] = {'url': url, 'msg_id': message.id}
-    await show_options(message, url)
-
-# --- SHOW OPTIONS ---
-async def show_options(message, url):
-    try:
-        msg = await message.reply_text("🔎 **Checking Link...**", quote=True)
-    except:
-        return
-
-    try:
-        opts = {
-            'quiet': True, 'noprogress': True, 'logger': silent_logger,
-            'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        }
-        
-        info = await asyncio.to_thread(run_sync_info, opts, url)
-        title = info.get('title', 'Video')
-        
-        await msg.delete()
-        
-        buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎥 1080p", callback_data="1080"), InlineKeyboardButton("🎥 720p", callback_data="720")],
-            [InlineKeyboardButton("🎥 360p", callback_data="360"), InlineKeyboardButton("🎵 Audio (MP3)", callback_data="mp3")]
-        ])
-        
-        await message.reply_text(f"🎬 **{title}**\n\n👇 **Select Quality:**", reply_markup=buttons, quote=True)
-        
-    except Exception as e:
-        await msg.edit_text(f"⚠️ Error: {e}")
-
-url_store = {}
-
-# --- HANDLE BUTTONS ---
-@app.on_callback_query()
-async def callback(client, query):
-    data = query.data
-    user_id = query.from_user.id
-    
-    stored_data = url_store.get(user_id)
-    if not stored_data:
-         await query.answer("❌ Link expired. Send again.", show_alert=True)
-         return
-    
-    url = stored_data['url']
-    original_msg_id = stored_data['msg_id']
-
-    await query.message.delete()
-    status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
-    filename = f"vid_{user_id}_{int(time.time())}"
-    
-    # --- FIXED FORMAT LOGIC (No More Errors) ---
-    # We added "/best" at the end. This means:
-    # "Try 1080p. If 1080p doesn't exist, GIVE ME THE BEST AVAILABLE."
-    if data == "mp3":
-        ydl_fmt = 'bestaudio/best'
-        ext = 'mp3'
-    elif data == "1080":
-        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
-        ext = 'mp4'
-    elif data == "720":
-        ydl_fmt = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
-        ext = 'mp4'
-    else: 
-        ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best'
-        ext = 'mp4'
-
-    opts = {
-        'format': ydl_fmt, 
-        'outtmpl': f'{filename}.%(ext)s',
-        'quiet': True, 'noprogress': True, 'logger': silent_logger,
-        'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'writethumbnail': True, 
-        'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-        'concurrent_fragment_downloads': 5, 
-        'retries': 10,
-        'fragment_retries': 10,
-    }
-    
-    if data != "mp3":
-        opts['merge_output_format'] = 'mp4'
-    else:
-        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
-
-    final_path = f"{filename}.{ext}"
-    thumb_path = f
+async def
