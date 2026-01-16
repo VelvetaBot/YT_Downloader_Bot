@@ -4,7 +4,7 @@ import asyncio
 import time
 from pyrogram import Client, filters, errors
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.enums import ChatMemberStatus
+from pyrogram.enums import ChatMemberStatus, ChatType
 import yt_dlp
 from keep_alive import keep_alive  
 
@@ -52,10 +52,10 @@ async def progress(current, total, message, start_time, status_text):
     except Exception:
         pass 
 
-# --- 5. GROUP MODERATION (STRICT LINK ENFORCEMENT) ---
+# --- 5. GROUP MODERATION (STRICT & SILENT) ---
 @app.on_message(filters.group, group=1)
 async def group_moderation(client, message):
-    # 1. ADMIN CHECK (Admins can send anything: text, images, other links)
+    # 1. Check if User is Admin (If Admin, Allow EVERYTHING)
     try:
         member = await client.get_chat_member(message.chat.id, message.from_user.id)
         if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR]:
@@ -63,21 +63,17 @@ async def group_moderation(client, message):
     except:
         pass 
 
-    # 2. Get the content (Text or Caption)
-    # If a user sends a photo/video, we check the caption.
-    content = message.text or message.caption
-
-    # 3. IF NO TEXT/LINK (e.g., just a Sticker, or Photo without link) -> DELETE
-    if not content:
+    # If message has no text (e.g., only photo/video without caption), DELETE it
+    if not message.text:
         try:
             await message.delete()
         except:
             pass
         return
 
-    text = content.lower()
+    text = message.text.lower()
     
-    # 4. ALLOWED DOMAINS ONLY
+    # 2. Allowed Domains (Twitter, FB, TikTok, YouTube, Instagram)
     allowed_domains = [
         "youtube.com", "youtu.be",  # YouTube
         "twitter.com", "x.com",     # Twitter/X
@@ -86,16 +82,16 @@ async def group_moderation(client, message):
         "facebook.com", "fb.watch"  # Facebook
     ]
 
-    # Check if the message contains at least one allowed link
+    # Check if message contains ANY allowed link
     has_allowed_link = any(domain in text for domain in allowed_domains)
 
-    # 5. STRICT DELETE LOGIC
-    # If it does NOT have an allowed link (e.g., "Hi", "Good morning", or google.com) -> DELETE
+    # 3. LOGIC: If NO allowed link is found -> DELETE
+    # If allowed link IS found -> Do nothing (Let other bots handle it)
     if not has_allowed_link:
         try:
             await message.delete()
         except:
-            pass # Bot needs "Delete Messages" permission in the group
+            pass 
 
 # --- 6. HELPER: THREADED DOWNLOAD ---
 def run_sync_download(opts, url):
@@ -106,30 +102,29 @@ def run_sync_info(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(url, download=False)
 
-# --- 7. START COMMAND ---
+# --- 7. START COMMAND (UPDATED) ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
+    # Clean welcome message, no buttons as requested
     welcome_text = (
-        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n"
-        "I can download videos **up to 2GB!** 🚀\n\n"
-        "**How to use:**\n"
-        "1️⃣ Send a YouTube link 🔗\n"
-        "2️⃣ Select Quality ✨\n"
-        "3️⃣ Wait for the magic! 📥"
+        "👋 **Hello!**\n\n"
+        "Send me a YouTube link to download videos or audio.\n"
+        "I support qualities up to 1080p and 2GB files."
     )
-    buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
-    await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
+    await message.reply_text(welcome_text)
 
-# --- 8. HANDLE DOWNLOADS (ONLY YOUTUBE IN PM OR GROUP) ---
-# This logic processes the link if it WAS allowed by the moderation above
+# --- 8. HANDLE DOWNLOADS (PRIVATE CHATS ONLY) ---
 @app.on_message(filters.text & ~filters.command("start"), group=2)
 async def handle_link(client, message):
+    # STRICT RULE: If message is in a GROUP, Ignore it.
+    # This ensures this bot acts ONLY as a cleaner in groups, allowing other bots to reply.
+    if message.chat.type != ChatType.PRIVATE:
+        return
+
     url = message.text
     user_id = message.from_user.id
     
-    # We only auto-download YouTube here. 
-    # Other links (Insta/FB) are allowed in group but this bot won't download them automatically 
-    # unless you add logic for them.
+    # Only process YouTube links in DM
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
@@ -140,8 +135,7 @@ async def handle_link(client, message):
 # --- SHOW OPTIONS ---
 async def show_options(message, url):
     try:
-        # In groups, reply quietly to avoid spam
-        msg = await message.reply_text("🔎 **Checking Link...**", quote=True)
+        msg = await message.reply_text("🔎 **Processing...**", quote=True)
     except:
         return
 
@@ -184,7 +178,7 @@ async def callback(client, query):
     original_msg_id = stored_data['msg_id']
 
     await query.message.delete()
-    status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
+    status_msg = await query.message.reply_text("⏳ **STARTING...**")
     filename = f"vid_{user_id}_{int(time.time())}"
     
     if data == "mp3":
@@ -218,13 +212,14 @@ async def callback(client, query):
     thumb_path = f"{filename}.jpg" 
 
     try:
-        await status_msg.edit_text("📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
+        await status_msg.edit_text("📥 **DOWNLOADING...**")
+        
         await asyncio.to_thread(run_sync_download, opts, url)
 
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
         
-        donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate / Support", url=DONATE_LINK)]])
+        # Removed Donate Button from here as well since you requested removal
         thumb = thumb_path if os.path.exists(thumb_path) else None
 
         if data == "mp3":
@@ -232,9 +227,8 @@ async def callback(client, query):
                 query.message.chat.id, 
                 audio=final_path, 
                 thumb=thumb,
-                caption="✅ **Downloaded via @VelvetaYTDownloaderBot**", 
+                caption="✅ **Downloaded successfully**", 
                 reply_to_message_id=original_msg_id, 
-                reply_markup=donate_btn,
                 progress=progress, 
                 progress_args=(status_msg, start_time, "☁️ **UPLOADING AUDIO...**")
             )
@@ -243,10 +237,9 @@ async def callback(client, query):
                 query.message.chat.id, 
                 video=final_path, 
                 thumb=thumb,
-                caption="✅ **Downloaded via @VelvetaYTDownloaderBot**", 
+                caption="✅ **Downloaded successfully**", 
                 supports_streaming=True, 
                 reply_to_message_id=original_msg_id, 
-                reply_markup=donate_btn,
                 progress=progress, 
                 progress_args=(status_msg, start_time, "☁️ **UPLOADING VIDEO...**")
             )
@@ -254,7 +247,7 @@ async def callback(client, query):
         await status_msg.delete()
 
     except Exception as e:
-        if "NoneType" in str(e) or "FakeWriter" in str(e): pass
+        if "NoneType" in str(e) or "FakeWriter" in str(e) or "UniversalFakeLogger" in str(e): pass
         else: await status_msg.edit_text(f"⚠️ Error: {e}")
     finally:
         if os.path.exists(final_path): os.remove(final_path)
@@ -262,5 +255,5 @@ async def callback(client, query):
 
 if __name__ == '__main__':
     keep_alive()
-    print("✅ Bot Started (Group Guard Mode Active)")
+    print("✅ Bot Started (Strict Mode + Async Fix)")
     app.run()
