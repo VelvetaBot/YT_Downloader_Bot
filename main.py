@@ -1,10 +1,10 @@
 import sys
 import os
-import logging
 import asyncio
 import time
 from pyrogram import Client, filters, errors
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.enums import ChatMemberStatus
 import yt_dlp
 from keep_alive import keep_alive  
 
@@ -19,7 +19,6 @@ class UniversalFakeLogger:
     def info(self, *args, **kwargs): pass
     def critical(self, *args, **kwargs): pass
 
-# Apply Silencer
 silent_logger = UniversalFakeLogger()
 sys.stdout = silent_logger
 sys.stderr = silent_logger
@@ -29,52 +28,75 @@ API_ID = 11253846
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
 BOT_TOKEN = "8034075115:AAG1mS-FAopJN3TykUBhMWtE6nQOlhBsKNk"
 
+# LINKS
+CHANNEL_LINK = "https://t.me/Velvetabots"              
+DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"   
+
 # --- 3. SETUP CLIENT ---
-# We enable IPv6 to help with connection stability
-app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=False)
+app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=True)
 
 # --- 4. RELIABLE PROGRESS BAR ---
 async def progress(current, total, message, start_time, status_text):
     try:
         now = time.time()
         diff = now - start_time
-        
-        # Update every 8 seconds (Less frequent = More stable)
-        if round(diff % 8.00) == 0 or current == total:
+        if round(diff % 5.00) == 0 or current == total:
             percentage = current * 100 / total
-            speed = current / diff if diff > 0 else 0
-            
             filled_blocks = int(percentage / 10)
             bar = "🟩" * filled_blocks + "⬜" * (10 - filled_blocks)
-            
             current_mb = round(current / 1024 / 1024, 2)
             total_mb = round(total / 1024 / 1024, 2)
-            
-            # Simple, clear text
             text = f"{status_text}\n{bar} **{round(percentage, 1)}%**\n📊 {current_mb}MB / {total_mb}MB"
-            
             if message.text != text:
                 await message.edit_text(text)
-                
     except Exception:
-        pass # If progress update fails, just keep uploading
+        pass 
 
-# --- START COMMAND ---
+# --- 5. GROUP MODERATION ---
+@app.on_message(filters.group, group=1)
+async def group_moderation(client, message):
+    try:
+        member = await client.get_chat_member(message.chat.id, message.from_user.id)
+        if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR]:
+            return 
+    except:
+        pass 
+
+    content = message.text or message.caption
+    if not content:
+        try:
+            await message.delete()
+        except:
+            pass
+        return
+
+    text = content.lower()
+    allowed_domains = ["youtube.com", "youtu.be", "twitter.com", "x.com", "instagram.com", "tiktok.com", "facebook.com", "fb.watch"]
+    
+    if not any(domain in text for domain in allowed_domains):
+        try:
+            await message.delete()
+        except:
+            pass
+
+# --- 6. HELPER: THREADED DOWNLOAD ---
+def run_sync_download(opts, url):
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        return ydl.download([url])
+
+def run_sync_info(opts, url):
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        return ydl.extract_info(url, download=False)
+
+# --- 7. START COMMAND ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    welcome_text = (
-        "🌟 **Welcome to Velveta Downloader (Pro)!** 🌟\n"
-        "I can download videos **up to 2GB!** 🚀\n\n"
-        "**How to use:**\n"
-        "1️⃣ Send a YouTube link 🔗\n"
-        "2️⃣ Select Quality ✨\n"
-        "3️⃣ Wait for the magic! 📥"
-    )
-    buttons = [[InlineKeyboardButton("📢 Join Update Channel", url="https://t.me/Velvetabots")]]
+    welcome_text = "🌟 **Welcome to Velveta Downloader!** 🌟\nSend a YouTube link to start! 📥"
+    buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
 
-# --- HANDLE LINKS ---
-@app.on_message(filters.text & ~filters.command("start"))
+# --- 8. HANDLE DOWNLOADS ---
+@app.on_message(filters.text & ~filters.command("start"), group=2)
 async def handle_link(client, message):
     url = message.text
     user_id = message.from_user.id
@@ -83,31 +105,35 @@ async def handle_link(client, message):
         return
 
     global url_store
-    url_store[user_id] = url
+    url_store[user_id] = {'url': url, 'msg_id': message.id}
     await show_options(message, url)
 
 # --- SHOW OPTIONS ---
 async def show_options(message, url):
-    msg = await message.reply_text("🔎 **Checking Link...**")
+    try:
+        msg = await message.reply_text("🔎 **Checking Link...**", quote=True)
+    except:
+        return
+
     try:
         opts = {
-            'quiet': True, 
-            'noprogress': True,
-            'logger': silent_logger,
-            'cookiefile': 'cookies.txt', 
-            'source_address': '0.0.0.0',
+            'quiet': True, 'noprogress': True, 'logger': silent_logger,
+            'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         }
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            title = info.get('title', 'Video')
+        
+        info = await asyncio.to_thread(run_sync_info, opts, url)
+        title = info.get('title', 'Video')
+        
         await msg.delete()
         
         buttons = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎥 1080p", callback_data="1080"), InlineKeyboardButton("🎥 720p", callback_data="720")],
             [InlineKeyboardButton("🎥 360p", callback_data="360"), InlineKeyboardButton("🎵 Audio (MP3)", callback_data="mp3")]
         ])
-        await message.reply_text(f"🎬 **{title}**\n\n👇 **Select Quality:**", reply_markup=buttons)
+        
+        await message.reply_text(f"🎬 **{title}**\n\n👇 **Select Quality:**", reply_markup=buttons, quote=True)
+        
     except Exception as e:
         await msg.edit_text(f"⚠️ Error: {e}")
 
@@ -119,59 +145,73 @@ async def callback(client, query):
     data = query.data
     user_id = query.from_user.id
     
-    url = url_store.get(user_id)
-    if not url:
+    stored_data = url_store.get(user_id)
+    if not stored_data:
          await query.answer("❌ Link expired. Send again.", show_alert=True)
          return
+    
+    url = stored_data['url']
+    original_msg_id = stored_data['msg_id']
 
     await query.message.delete()
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
     filename = f"vid_{user_id}_{int(time.time())}"
     
-    # --- FLEXIBLE FORMATS ---
+    # --- FIXED FORMAT LOGIC (No More Errors) ---
+    # We added "/best" at the end. This means:
+    # "Try 1080p. If 1080p doesn't exist, GIVE ME THE BEST AVAILABLE."
     if data == "mp3":
         ydl_fmt = 'bestaudio/best'
         ext = 'mp3'
     elif data == "1080":
-        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]'
+        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
         ext = 'mp4'
     elif data == "720":
-        ydl_fmt = 'bestvideo[height<=720]+bestaudio/best[height<=720]'
+        ydl_fmt = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
         ext = 'mp4'
     else: 
-        ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]'
+        ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best'
         ext = 'mp4'
 
     opts = {
         'format': ydl_fmt, 
         'outtmpl': f'{filename}.%(ext)s',
-        'quiet': True, 'noprogress': True,
-        'logger': silent_logger,
+        'quiet': True, 'noprogress': True, 'logger': silent_logger,
         'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'writethumbnail': True, 
+        'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
+        'concurrent_fragment_downloads': 5, 
+        'retries': 10,
+        'fragment_retries': 10,
     }
     
     if data != "mp3":
         opts['merge_output_format'] = 'mp4'
     else:
-        opts['postprocessors'] = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}]
+        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
 
     final_path = f"{filename}.{ext}"
+    thumb_path = f"{filename}.jpg" 
 
     try:
         await status_msg.edit_text("📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([url])
+        await asyncio.to_thread(run_sync_download, opts, url)
 
-        await status_msg.edit_text("☁️ **UPLOADING...**\n(This supports up to 2GB!)")
+        await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
         
-        # NOTE: Explicitly passing the 'progress' function here
+        donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate / Support", url=DONATE_LINK)]])
+        thumb = thumb_path if os.path.exists(thumb_path) else None
+
         if data == "mp3":
             await app.send_audio(
                 query.message.chat.id, 
                 audio=final_path, 
+                thumb=thumb,
                 caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", 
+                reply_to_message_id=original_msg_id, 
+                reply_markup=donate_btn,
                 progress=progress, 
                 progress_args=(status_msg, start_time, "☁️ **UPLOADING AUDIO...**")
             )
@@ -179,8 +219,11 @@ async def callback(client, query):
             await app.send_video(
                 query.message.chat.id, 
                 video=final_path, 
+                thumb=thumb,
                 caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", 
                 supports_streaming=True, 
+                reply_to_message_id=original_msg_id, 
+                reply_markup=donate_btn,
                 progress=progress, 
                 progress_args=(status_msg, start_time, "☁️ **UPLOADING VIDEO...**")
             )
@@ -188,16 +231,13 @@ async def callback(client, query):
         await status_msg.delete()
 
     except Exception as e:
-        # Ignore ALL logging-related errors
-        if "NoneType" in str(e) or "FakeWriter" in str(e) or "UniversalFakeLogger" in str(e):
-            pass
-        else:
-            await status_msg.edit_text(f"⚠️ Error: {e}")
+        if "NoneType" in str(e) or "FakeWriter" in str(e): pass
+        else: await status_msg.edit_text(f"⚠️ Error: {e}")
     finally:
-        if os.path.exists(final_path):
-            os.remove(final_path)
+        if os.path.exists(final_path): os.remove(final_path)
+        if os.path.exists(thumb_path): os.remove(thumb_path)
 
 if __name__ == '__main__':
     keep_alive()
-    print("✅ Bot Started (Progress Bar Fixed)")
+    print("✅ Bot Started (Format Fix Applied)")
     app.run()
