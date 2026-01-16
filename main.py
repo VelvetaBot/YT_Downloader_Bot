@@ -14,7 +14,7 @@ import yt_dlp
 # --- 1. CONFIGURATION ---
 API_ID = 11253846                   
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
-# 👇 Paste NEW Token Here 👇
+# ✅ NEW TOKEN UPDATED HERE
 BOT_TOKEN = "8034075115:AAEW-7eN8fzd31acrcvNwCYwKT2__c6b_ss" 
 
 # LINKS
@@ -151,7 +151,7 @@ async def show_options(message, url):
 
 url_store = {}
 
-# --- HANDLE BUTTONS ---
+# --- HANDLE BUTTONS (AUTO-REPAIR LOGIC) ---
 @app.on_callback_query()
 async def callback(client, query):
     data = query.data
@@ -169,7 +169,7 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
     filename = f"vid_{user_id}_{int(time.time())}"
     
-    # --- FORMAT LOGIC ---
+    # --- STRATEGY 1: HIGH QUALITY (Merge Video+Audio) ---
     if data == "mp3":
         ydl_fmt = 'bestaudio/best'; ext = 'mp3'
     elif data == "1080":
@@ -200,8 +200,29 @@ async def callback(client, query):
 
     try:
         await status_msg.edit_text("📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
-        await asyncio.to_thread(run_sync_download, opts, url)
+        
+        # Attempt 1: Standard Download
+        try:
+            await asyncio.to_thread(run_sync_download, opts, url)
+        except:
+            pass # Fail silently, check file existence below
 
+        # --- STRATEGY 2: FALLBACK (Empty File Fix) ---
+        # If file is missing (0 bytes or not found), try simpler method
+        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+            await status_msg.edit_text("⚠️ **Merging Failed. Trying Fallback Mode...**")
+            
+            # Remove complex options
+            if 'merge_output_format' in opts: del opts['merge_output_format']
+            opts['format'] = 'best' # Download single best file (no merge needed)
+            
+            await asyncio.to_thread(run_sync_download, opts, url)
+            
+            # If still failing, raise error
+            if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+                raise Exception("Download Failed (File is empty)")
+
+        # Upload
         await status_msg.edit_text("☁️ **UPLOADING...**")
         start_time = time.time()
         
