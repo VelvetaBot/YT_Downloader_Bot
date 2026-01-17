@@ -1,4 +1,4 @@
-# bot.py - Main Bot File
+# bot.py - YouTube Downloader Bot with Web Server for Render
 
 import os
 import logging
@@ -7,6 +7,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from telegram.constants import ChatAction
 import yt_dlp
 import asyncio
+from aiohttp import web
 
 # Configure logging
 logging.basicConfig(
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Get bot token from environment variable
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_USERNAME = "@Velvetabots"
+PORT = int(os.environ.get('PORT', 10000))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message"""
@@ -40,6 +42,10 @@ How to use:
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle YouTube URL"""
+    # Check if message and text exist
+    if not update.message or not update.message.text:
+        return
+    
     url = update.message.text.strip()
     
     # Check if it's a valid YouTube URL
@@ -50,12 +56,27 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Show typing action
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     
-    # Fetch video info
+    # Fetch video info with updated options to bypass bot detection
     try:
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
             'no_color': True,
+            'extract_flat': False,
+            # Add headers to bypass bot detection
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Sec-Fetch-Mode': 'navigate',
+            },
+            # Additional options to help with extraction
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'player_skip': ['webpage', 'configs'],
+                }
+            },
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -77,8 +98,8 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            mins = duration // 60
-            secs = duration % 60
+            mins = duration // 60 if duration else 0
+            secs = duration % 60 if duration else 0
             caption = f"📺 **{title}**\n⏱ Duration: {mins}:{secs:02d}\n\n✨ Select quality:"
             
             if thumbnail:
@@ -97,9 +118,19 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
     except Exception as e:
         logger.error(f"Error fetching video info: {e}")
-        await update.message.reply_text(
-            "❌ Error fetching video information. Please check the URL and try again."
-        )
+        error_msg = "❌ Error fetching video information.\n\n"
+        
+        if "Sign in to confirm" in str(e) or "bot" in str(e).lower():
+            error_msg += "YouTube is detecting automated requests. This can happen when:\n"
+            error_msg += "• The video has age restrictions\n"
+            error_msg += "• The video is private\n"
+            error_msg += "• Too many requests from the server\n\n"
+            error_msg += "Try another video or wait a few minutes and try again."
+        else:
+            error_msg += "Please check the URL and try again.\n"
+            error_msg += f"Error: {str(e)[:100]}"
+        
+        await update.message.reply_text(error_msg)
 
 def progress_hook(d):
     """Progress hook for yt-dlp"""
@@ -154,6 +185,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'quiet': False,
             'no_warnings': False,
             'progress_hooks': [progress_hook],
+            # Add same headers for download
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Sec-Fetch-Mode': 'navigate',
+            },
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'player_skip': ['webpage', 'configs'],
+                }
+            },
         }
         
         # For audio, add postprocessor
@@ -242,10 +286,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Exception as e:
         logger.error(f"Error downloading video: {e}")
-        error_msg = str(e)
-        if len(error_msg) > 200:
-            error_msg = error_msg[:200] + "..."
-        await download_msg.edit_text(f"❌ Error: {error_msg}")
+        error_msg = "❌ Download failed.\n\n"
+        
+        if "Sign in to confirm" in str(e) or "bot" in str(e).lower():
+            error_msg += "YouTube blocked the request. Try:\n"
+            error_msg += "• A different video\n"
+            error_msg += "• Waiting a few minutes\n"
+            error_msg += "• Using a shorter video"
+        else:
+            error_msg += f"Error: {str(e)[:150]}"
+        
+        await download_msg.edit_text(error_msg)
         
     finally:
         # Clean up the file
@@ -256,7 +307,28 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f"Error cleaning up file: {e}")
 
-def main():
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Handle errors"""
+    logger.error(f"Exception while handling an update: {context.error}")
+
+# Web server for Render health checks
+async def health_check(request):
+    """Health check endpoint"""
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    """Start a simple web server for Render"""
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    app.router.add_get('/health', health_check)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    logger.info(f"Web server started on port {PORT}")
+
+async def start_bot():
     """Start the bot"""
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN environment variable not set!")
@@ -265,14 +337,32 @@ def main():
     # Create application
     application = Application.builder().token(BOT_TOKEN).build()
     
+    # Add error handler
+    application.add_error_handler(error_handler)
+    
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     application.add_handler(CallbackQueryHandler(button_callback))
     
-    # Start the bot
+    # Initialize and start the application
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    
     logger.info("Bot started successfully!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    
+    # Keep the bot running
+    while True:
+        await asyncio.sleep(1)
+
+async def main():
+    """Main function to run both web server and bot"""
+    # Start web server and bot concurrently
+    await asyncio.gather(
+        start_web_server(),
+        start_bot()
+    )
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
