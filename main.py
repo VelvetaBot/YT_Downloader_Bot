@@ -28,9 +28,7 @@ API_ID = 11253846
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
 BOT_TOKEN = "8034075115:AAHKc9YkRmEgba3Is9dhhW8v-7zLmLwjVac"
 
-# 💰 DONATE/SUPPORT LINK
-# Currently set to your Channel. 
-# If you get a 'Buy Me a Coffee' link later, paste it here!
+# UPDATE CHANNEL (For the Donate Button)
 SUPPORT_LINK = "https://t.me/Velvetabots" 
 
 # --- 3. SETUP CLIENT ---
@@ -77,7 +75,7 @@ async def handle_link(client, message):
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
-    # Store URL AND Message ID (For Reply feature)
+    # Store URL AND the Message ID (so we can reply to it later)
     global url_store
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     
@@ -85,8 +83,7 @@ async def handle_link(client, message):
 
 # --- SHOW OPTIONS ---
 async def show_options(message, url):
-    # REPLY to the user's link
-    msg = await message.reply_text("🔎 **Checking Link...**", quote=True)
+    msg = await message.reply_text("🔎 **Checking Link...**")
     try:
         opts = {
             'quiet': True, 'noprogress': True, 'logger': silent_logger,
@@ -102,10 +99,7 @@ async def show_options(message, url):
             [InlineKeyboardButton("🎥 1080p", callback_data="1080"), InlineKeyboardButton("🎥 720p", callback_data="720")],
             [InlineKeyboardButton("🎥 360p", callback_data="360"), InlineKeyboardButton("🎵 Audio (MP3)", callback_data="mp3")]
         ])
-        
-        # Send Options (Replying to link)
-        await message.reply_text(f"🎬 **{title}**\n\n👇 **Select Quality:**", reply_markup=buttons, quote=True)
-        
+        await message.reply_text(f"🎬 **{title}**\n\n👇 **Select Quality:**", reply_markup=buttons)
     except Exception as e:
         await msg.edit_text(f"⚠️ Error: {e}")
 
@@ -117,13 +111,14 @@ async def callback(client, query):
     data = query.data
     user_id = query.from_user.id
     
+    # Retrieve Data
     stored_data = url_store.get(user_id)
     if not stored_data:
          await query.answer("❌ Link expired. Send again.", show_alert=True)
          return
     
     url = stored_data['url']
-    original_msg_id = stored_data['msg_id'] # ID to reply to
+    original_msg_id = stored_data['msg_id'] # Get the ID to reply to
 
     await query.message.delete()
     status_msg = await query.message.reply_text("⏳ **STARTING...**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
@@ -146,21 +141,21 @@ async def callback(client, query):
         'cookiefile': 'cookies.txt', 'source_address': '0.0.0.0',
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         
-        # FORCE JPG THUMBNAIL (Fixes White Box)
-        'writethumbnail': True, 
+        # --- THUMBNAIL SETTINGS ---
+        'writethumbnail': True, # Download thumbnail
         'postprocessors': [
-            {'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}, 
+            {'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}, # Force JPG for Telegram
         ],
     }
     
     if data != "mp3":
         opts['merge_output_format'] = 'mp4'
     else:
-        # For MP3, extract audio + thumbnail
+        # For MP3, we just want audio extraction + thumbnail conversion
         opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
 
     final_path = f"{filename}.{ext}"
-    thumb_path = f"{filename}.jpg" 
+    thumb_path = f"{filename}.jpg" # It will be saved as JPG due to postprocessor
 
     try:
         await status_msg.edit_text("📥 **DOWNLOADING...**\n🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%")
@@ -170,10 +165,10 @@ async def callback(client, query):
         await status_msg.edit_text("☁️ **UPLOADING...**\n(This supports up to 2GB!)")
         start_time = time.time()
         
-        # ☕ DONATE BUTTON
+        # DONATE BUTTON
         donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate / Support", url=SUPPORT_LINK)]])
 
-        # Check for Thumbnail
+        # Check if thumbnail exists
         thumb = thumb_path if os.path.exists(thumb_path) else None
 
         if data == "mp3":
@@ -182,7 +177,7 @@ async def callback(client, query):
                 audio=final_path, 
                 thumb=thumb,
                 caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", 
-                reply_to_message_id=original_msg_id, # REPLY FEATURE
+                reply_to_message_id=original_msg_id, # REPLY TO LINK
                 reply_markup=donate_btn,             # DONATE BUTTON
                 progress=progress, 
                 progress_args=(status_msg, start_time, "☁️ **UPLOADING AUDIO...**")
@@ -194,7 +189,7 @@ async def callback(client, query):
                 thumb=thumb,
                 caption="✅ **Downloaded via @Velveta_YT_Downloader_bot**", 
                 supports_streaming=True, 
-                reply_to_message_id=original_msg_id, # REPLY FEATURE
+                reply_to_message_id=original_msg_id, # REPLY TO LINK
                 reply_markup=donate_btn,             # DONATE BUTTON
                 progress=progress, 
                 progress_args=(status_msg, start_time, "☁️ **UPLOADING VIDEO...**")
@@ -211,6 +206,5 @@ async def callback(client, query):
 
 if __name__ == '__main__':
     keep_alive()
-    print("✅ Bot Started (Thumbnails + Donate + Reply)")
+    print("✅ Bot Started (Thumbnails + Donate)")
     app.run()
-
