@@ -8,7 +8,7 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
 
-# --- 1. WEB SERVER (Keeps Bot Alive) ---
+# --- 1. WEB SERVER (Koyeb Needs This) ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
@@ -62,16 +62,16 @@ async def handle_link(client, message):
     status_msg = await message.reply_text("⏳ **Checking Link...**")
 
     # --- 🔴 THE FIX IS HERE ---
-    # We use 'best[ext=mp4]/best' instead of '18'.
-    # This means: "Give me the best MP4 you have. If no MP4, give me anything else."
-    # It NEVER fails.
+    # Instead of '18', we use 'best[ext=mp4]/best'
+    # This implies: "Give me the best MP4 you have. If not, give me any video."
+    # This prevents the "Format Not Available" error.
     opts = {
         'format': 'best[ext=mp4]/best', 
         'outtmpl': f'video_{message.from_user.id}.mp4',
         'quiet': True,
         'nocheckcertificate': True,
         
-        # Anti-Bot / Anti-Block Settings
+        # Anti-Bot Settings (Keeps "Sign in" error away)
         'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
         'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
     }
