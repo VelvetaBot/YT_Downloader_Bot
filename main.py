@@ -14,7 +14,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "Velveta Bot is Alive!"
+    return "Velveta Bot (Multi-Server Mode) is Running!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -83,39 +83,49 @@ def time_formatter(milliseconds: int) -> str:
         ((str(seconds) + "s, ") if seconds else "")
     return tmp[:-2]
 
-# --- API FUNCTION (New Working Server) ---
+# --- MULTI-SERVER API FUNCTION ---
 def get_download_link(url, quality):
-    # 👇 పాత లింక్ తీసేసి, పని చేసే కొత్త సర్వర్ లింక్ పెట్టాను (Mirror)
-    api_url = "https://co.wuk.sh/api/json" 
+    # 👇 ఐదు వేరు వేరు సర్వర్ లింకులు (Mirrors)
+    # బాట్ వీటిని ఒక్కొక్కటిగా ట్రై చేస్తుంది.
+    api_instances = [
+        "https://api.cobalt.tools/api/json",      # Server 1 (Official)
+        "https://co.wuk.sh/api/json",             # Server 2 (Backup)
+        "https://cobalt.start.gg/api/json",       # Server 3
+        "https://api.server.cobalt.tools/api/json", # Server 4
+        "https://dl.khub.moe/api/json"            # Server 5
+    ]
     
     headers = {
         "Accept": "application/json",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
     }
     
     v_quality = "720"
     is_audio = False
-    
-    if quality == "360":
-        v_quality = "360"
-    elif quality == "mp3":
-        is_audio = True
+    if quality == "360": v_quality = "360"
+    elif quality == "mp3": is_audio = True
 
     data = {
         "url": url,
         "vQuality": v_quality,
         "isAudioOnly": is_audio,
     }
-    
-    try:
-        response = requests.post(api_url, json=data, headers=headers)
-        data = response.json()
-        if "url" in data:
-            return data["url"]
-        else:
-            return None
-    except:
-        return None
+
+    # 👇 Loop: ఒక్కో లింక్ ట్రై చేస్తుంది
+    for api_url in api_instances:
+        try:
+            print(f"Trying Server: {api_url}") # Logs లో కనిపిస్తుంది
+            response = requests.post(api_url, json=data, headers=headers, timeout=10)
+            if response.status_code == 200:
+                json_data = response.json()
+                if "url" in json_data:
+                    return json_data["url"] # పని చేస్తే ఇక్కడే ఆగిపోతుంది
+        except Exception as e:
+            print(f"Failed {api_url}: {e}")
+            continue # ఇది పని చేయకపోతే నెక్స్ట్ లింక్ కి వెళ్తుంది
+
+    return None # అన్నీ ఫెయిల్ అయితేనే ఇది వస్తుంది
 
 # --- COMMANDS ---
 @app.on_message(filters.command("start"))
@@ -159,12 +169,13 @@ async def cb_handler(client, query):
         return
 
     url = query.message.reply_to_message.text
-    await query.message.edit("🔄 **Connecting to Server...**")
+    await query.message.edit("🔄 **Finding Best Server...**") # Message changed
     
+    # Get Link from Multi-Server Logic
     direct_link = await asyncio.to_thread(get_download_link, url, quality)
     
     if not direct_link:
-        await query.message.edit("❌ Server Busy. Please try another link.")
+        await query.message.edit("❌ All Servers are Busy. Please try later.")
         return
 
     filename = f"video_{user_id}.mp4"
@@ -187,8 +198,6 @@ async def cb_handler(client, query):
             await query.message.edit("⬆️ **Uploading...**")
             
             donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate", url="https://buymeacoffee.com/VelvetaBots")]])
-            
-            # Caption for Reply
             caption_text = f"✅ **Downloaded: {quality.upper()}**" if quality == "mp3" else f"✅ **Downloaded: {quality}p**"
 
             if quality == "mp3":
@@ -223,4 +232,3 @@ async def cb_handler(client, query):
 if __name__ == '__main__':
     start_web_server()
     app.run()
-    
