@@ -231,44 +231,4 @@ async def cb_handler(client, query):
 if __name__ == '__main__':
     start_web_server()
     app.run()
-        reply_markup=buttons,
-        quote=True
-    )
-
-# --- CALLBACK HANDLER ---
-@app.on_callback_query()
-async def cb_handler(client, query):
-    data = query.data.split("|")
-    quality = data[0]
-    user_id = int(data[1])
-
-    if query.from_user.id != user_id:
-        await query.answer("Not your request!", show_alert=True)
-        return
-
-    url = query.message.reply_to_message.text
-    await query.message.edit("🔄 **Connecting to Website...**")
-    
-    # 1. Get Link from Website API
-    direct_link = await asyncio.to_thread(get_download_link, url, quality)
-    
-    if not direct_link:
-        await query.message.edit("❌ Website is busy/error. Try again later.")
-        return
-
-    # 2. Download to Server
-    filename = f"video_{user_id}.mp4"
-    if quality == "mp3": filename = f"audio_{user_id}.mp3"
-    
-    start_time = time.time()
-    
-    try:
-        def download_file():
-            with requests.get(direct_link, stream=True) as r:
-                r.raise_for_status()
-                total_size = int(r.headers.get('content-length', 0))
-                downloaded = 0
-                with open(filename, 'wb') as f:
-                    for chunk in
-    
-
+        
