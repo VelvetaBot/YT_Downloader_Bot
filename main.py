@@ -17,7 +17,7 @@ CHANNEL_LINK = "https://t.me/Velvetabots"
 DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"   
 BOT_USERNAME = "@VelvetaYTDownloaderBot"
 
-# --- 2. SILENT LOGGER (Prevents Console Spam) ---
+# --- 2. SILENT LOGGER ---
 class UniversalFakeLogger:
     def debug(self, msg): pass
     def warning(self, msg): pass
@@ -25,7 +25,7 @@ class UniversalFakeLogger:
     def info(self, msg): pass
 
 silent_logger = UniversalFakeLogger()
-sys.stdout = open(os.devnull, 'w') # Mute Standard Output
+sys.stdout = open(os.devnull, 'w') 
 
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=True)
 
@@ -57,9 +57,14 @@ async def handle_link(client, message):
     msg = await message.reply_text("🔎 **Checking...**")
     global url_store
     
-    # Simple check to get title
+    # 🕵️‍♂️ ANTI-BOT CHECK (Spoof Android Client)
+    check_opts = {
+        'quiet': True, 
+        'extractor_args': {'youtube': {'player_client': ['android', 'ios']}}
+    }
+    
     try:
-        with yt_dlp.YoutubeDL({'quiet':True}) as ydl:
+        with yt_dlp.YoutubeDL(check_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             title = info.get('title', 'Video')
     except:
@@ -81,7 +86,7 @@ def download_video(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.download([url])
 
-# --- 7. CALLBACK (The Important Part) ---
+# --- 7. CALLBACK WITH ANTI-BLOCK ---
 @app.on_callback_query()
 async def callback(client, query):
     user_id = query.from_user.id
@@ -94,18 +99,27 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⚡ **Starting...**")
     
     filename = f"vid_{user_id}_{int(time.time())}"
-    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe() # GET FFMPEG PATH
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe() 
 
-    # --- CONFIGURATION ---
+    # 🕵️‍♂️ ANTI-BLOCK CONFIGURATION
     opts = {
         'outtmpl': f'{filename}.%(ext)s',
         'quiet': True, 'noprogress': True,
-        'cookiefile': 'cookies.txt', # Remove if you don't have the file
-        'ffmpeg_location': ffmpeg_path, # POINT TO FFMPEG
-        'concurrent_fragment_downloads': 5
+        'ffmpeg_location': ffmpeg_path,
+        'concurrent_fragment_downloads': 5,
+        
+        # 👇 THIS TRICKS YOUTUBE INTO THINKING WE ARE A PHONE 👇
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios']
+            }
+        }
     }
 
-    # Format Logic
+    # Add Cookies ONLY if the file exists (Prevents errors if missing)
+    if os.path.exists('cookies.txt'):
+        opts['cookiefile'] = 'cookies.txt'
+
     if data == "mp3":
         opts['format'] = 'bestaudio/best'
         opts['postprocessors'] = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'}]
@@ -123,28 +137,25 @@ async def callback(client, query):
         opts['merge_output_format'] = 'mp4'
         ext = 'mp4'
 
-    # --- THE DOWNLOAD LOOP (WITH RESCUE MODE) ---
     try:
-        await status_msg.edit_text("📥 **Downloading (High Quality)...**")
+        await status_msg.edit_text("📥 **Downloading...**")
         await asyncio.to_thread(download_video, opts, url)
     
     except Exception as e:
-        # 🚨 RESCUE MODE: If High Quality fails, use 'best' (Single File)
-        print(f"HQ Failed: {e}. Switching to Standard Quality.")
-        if data != "mp3":
-            try:
-                await status_msg.edit_text("⚠️ **HQ Failed. Trying Standard Quality...**")
-                # Remove complex settings that need FFmpeg
-                opts['format'] = 'best[ext=mp4]/best' 
-                opts.pop('merge_output_format', None)
-                
-                # Retry Download
-                await asyncio.to_thread(download_video, opts, url)
-            except Exception as final_e:
-                await status_msg.edit_text(f"❌ Failed: {final_e}")
-                return
+        print(f"Error: {e}")
+        # RESCUE MODE: Try 'web' client if 'android' fails
+        try:
+            opts['extractor_args']['youtube']['player_client'] = ['web']
+            opts['format'] = 'best[ext=mp4]/best' # Simple format
+            opts.pop('merge_output_format', None)
+            
+            await status_msg.edit_text("⚠️ **Trying alternate method...**")
+            await asyncio.to_thread(download_video, opts, url)
+        except Exception as final_e:
+            await status_msg.edit_text(f"❌ Failed: {final_e}")
+            return
 
-    # --- UPLOAD ---
+    # UPLOAD
     final_file = f"{filename}.{ext}"
     if os.path.exists(final_file):
         await status_msg.edit_text("☁️ **Uploading...**")
@@ -157,10 +168,9 @@ async def callback(client, query):
             await status_msg.delete()
         except Exception as up_e:
             await status_msg.edit_text(f"⚠️ Upload Error: {up_e}")
-        
-        os.remove(final_file) # Cleanup
+        os.remove(final_file)
     else:
-        await status_msg.edit_text("❌ File not found after download.")
+        await status_msg.edit_text("❌ Download failed.")
 
 if __name__ == '__main__':
     keep_alive()
