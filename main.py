@@ -39,20 +39,20 @@ async def handle_link(client, message):
     url = message.text
     if "http" not in url: return
 
-    status_msg = await message.reply_text("📱 **Using Google Phone Mode...**")
+    status_msg = await message.reply_text("🍪 **Trying with New Cookies...**")
 
-    # 👇 పక్కా ఆండ్రాయిడ్ (Google Phone) సెట్టింగ్స్
     ydl_opts = {
-        'format': 'best',
+        # 👇 ఇది ముఖ్యం: ఆడియో, వీడియో విడివిడిగా కాకుండా, కలిపి ఉన్న ఫైల్ మాత్రమే లాగుతుంది.
+        # దీనివల్ల FFmpeg లేకపోయినా వీడియో డౌన్లోడ్ అవుతుంది.
+        'format': 'best[ext=mp4]/best', 
         'outtmpl': f'video_{message.from_user.id}.%(ext)s',
         'cookiefile': 'cookies.txt',  # కొత్త కుక్కీస్ ఉండాలి
         'quiet': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        # ఇది బాట్‌ని "Android Phone" లాగా చూపిస్తుంది
         'extractor_args': {
             'youtube': {
-                'player_client': ['android'],
+                'player_client': ['android'], # Android Mode
             }
         }
     }
@@ -70,12 +70,12 @@ async def handle_link(client, message):
             await app.send_video(
                 message.chat.id, 
                 video=filename, 
-                caption="✅ **Downloaded via Android Mode**"
+                caption="✅ **Downloaded!**"
             )
             os.remove(filename)
             await status_msg.delete()
         else:
-            await status_msg.edit_text("❌ Failed. Cookies might be expired.")
+            await status_msg.edit_text("❌ Failed. Check Cookie file.")
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Error: {e}")
