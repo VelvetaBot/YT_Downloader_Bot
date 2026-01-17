@@ -39,44 +39,25 @@ async def handle_link(client, message):
     url = message.text
     if "http" not in url: return
 
-    status_msg = await message.reply_text("🍪 **Checking Cookies & Downloading...**")
+    status_msg = await message.reply_text("🔄 **Processing with iOS Mode...**")
 
-    # 👇 ఇక్కడ మార్పు: 'best' అని ఇస్తే ఏది దొరికితే అది డౌన్లోడ్ చేస్తుంది (Error రాదు)
+    # 👇 iOS Client ని వాడుతున్నాం. ఇది 'n challenge' ఎర్రర్‌ని ఫిక్స్ చేస్తుంది.
     ydl_opts = {
         'format': 'best', 
-        'outtmpl': f'video_{message.from_user.id}.%(ext)s', # Extension ఆటోమేటిక్ గా తీసుకుంటుంది
-        'cookiefile': 'cookies.txt',
+        'outtmpl': f'video_{message.from_user.id}.%(ext)s',
+        'cookiefile': 'cookies.txt',  # కుక్కీస్ కచ్చితంగా ఉండాలి
         'quiet': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        # 403 ఎర్రర్ రాకుండా కొంచెం స్లోగా డౌన్లోడ్ చేయడానికి ప్రయత్నం
-        'socket_timeout': 30,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios'],  # <--- ఇదే అసలైన మార్పు
+            }
+        }
     }
 
     try:
         def run_download():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                return ydl.prepare_filename(info)
-        
-        filename = await asyncio.to_thread(run_download)
-        
-        if os.path.exists(filename):
-            await status_msg.edit_text("⬆️ **Uploading...**")
-            await app.send_video(
-                message.chat.id, 
-                video=filename, 
-                caption="✅ **Downloaded!**"
-            )
-            os.remove(filename)
-            await status_msg.delete()
-        else:
-            await status_msg.edit_text("❌ Failed. Cookies might be expired.")
-
-    except Exception as e:
-        # ఎర్రర్ వస్తే అది ఏంటో క్లియర్ గా చూపిస్తుంది
-        await status_msg.edit_text(f"❌ Error: {e}")
-
-if __name__ == '__main__':
-    start_web_server()
-    app.run()
+                return ydl
