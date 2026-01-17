@@ -53,8 +53,8 @@ async def progress(current, total, message, start_time, status_text):
 async def start(client, message):
     await message.reply_text(
         f"👋 **Hello! I am {BOT_USERNAME}**\n\n"
-        "✅ **System Status: Online**\n"
-        "I am ready to download.\n\n"
+        "✅ **Status: Anti-Block Active**\n"
+        "I am mimicking an Android device to bypass errors.\n\n"
         "👇 **Send me a YouTube link!**",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📢 Updates", url=CHANNEL_LINK)]])
     )
@@ -92,7 +92,7 @@ async def callback(client, query):
     url = url_store[user_id]['url']
     await query.message.delete()
     
-    status_msg = await query.message.reply_text("⚡ **Processing...**")
+    status_msg = await query.message.reply_text("⚡ **Spoofing Android Client...**")
     filename = f"dl_{user_id}_{int(time.time())}"
 
     if data == "audio":
@@ -101,16 +101,26 @@ async def callback(client, query):
         upload_func = app.send_audio
         type_str = "Audio"
     else:
+        # Video: Direct download only (Safe Mode)
         ydl_fmt = 'best[ext=mp4]/best'
         ext = 'mp4'
         upload_func = app.send_video
         type_str = "Video"
 
+    # --- 🔴 ANTI-BLOCK SETTINGS ---
     opts = {
         'format': ydl_fmt,
         'outtmpl': f'{filename}.%(ext)s',
         'quiet': True,
         'nocheckcertificate': True,
+        
+        # 1. Force IPv4 (Koyeb IPv6 is often blocked)
+        'force_ipv4': True,
+        
+        # 2. Spoof Android Client (This fixes "Empty File")
+        'extractor_args': {'youtube': {'player_client': ['android', 'ios']}},
+        
+        # 3. Use Cookies (Must exist in repo)
         'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
     }
 
@@ -120,13 +130,15 @@ async def callback(client, query):
         await status_msg.edit_text(f"⬇️ **Downloading {type_str}...**")
         await asyncio.to_thread(run_download, opts, url)
 
+        # File Discovery
         if not os.path.exists(final_path):
              for f in os.listdir('.'):
                  if f.startswith(filename) and not f.endswith('.jpg'):
                      final_path = f
                      break
         
-        if not os.path.exists(final_path): raise Exception("Download failed.")
+        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+             raise Exception("YouTube Blocked the Download (Empty File).")
 
         await status_msg.edit_text(f"⬆️ **Uploading {type_str}...**")
         start_time = time.time()
@@ -148,14 +160,14 @@ async def callback(client, query):
                 try: os.remove(f)
                 except: pass
 
-# --- 7. MAIN LOOP (PREVENTS EXIT CODE 0) ---
+# --- 7. MAIN LOOP ---
 async def main():
     print("🌍 Starting Web Server...")
     start_web_server()
     print("🤖 Starting Bot Client...")
     await app.start()
-    print("✅ Bot is Running! (Press Ctrl+C to stop)")
-    await idle()  # <--- This is the magic line that keeps it alive
+    print("✅ Bot is Running with Anti-Block!")
+    await idle()
     await app.stop()
 
 if __name__ == '__main__':
