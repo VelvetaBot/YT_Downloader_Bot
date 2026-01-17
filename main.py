@@ -26,7 +26,7 @@ sys.stderr = silent_logger
 # --- 2. CONFIGURATION ---
 API_ID = 11253846                   
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
-BOT_TOKEN = "7523588106:AAHLLbwPCLJwZdKUVL6gA6KNAR_86eHJCWU"
+BOT_TOKEN = "8034075115:AAHKc9YkRmEgba3Is9dhhW8v-7zLmLwjVac"
 
 # 💰 DONATE/SUPPORT LINK
 # Currently set to your Channel. 
@@ -213,3 +213,4 @@ if __name__ == '__main__':
     keep_alive()
     print("✅ Bot Started (Thumbnails + Donate + Reply)")
     app.run()
+
