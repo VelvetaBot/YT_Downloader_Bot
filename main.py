@@ -60,4 +60,25 @@ async def handle_link(client, message):
         def run_download():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                return ydl
+                return ydl.prepare_filename(info)
+        
+        filename = await asyncio.to_thread(run_download)
+        
+        if os.path.exists(filename):
+            await status_msg.edit_text("⬆️ **Uploading...**")
+            await app.send_video(
+                message.chat.id, 
+                video=filename, 
+                caption="✅ **Downloaded!**"
+            )
+            os.remove(filename)
+            await status_msg.delete()
+        else:
+            await status_msg.edit_text("❌ Failed. Try updating cookies again.")
+
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error: {e}")
+
+if __name__ == '__main__':
+    start_web_server()
+    app.run()
