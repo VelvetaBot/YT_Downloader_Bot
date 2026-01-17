@@ -69,15 +69,4 @@ async def handle_link(client, message):
     if "http" not in url: return
 
     # Store URL for the button click
-    url_store[message.from_user.id] = {'url': url, 'msg_id': message.id}
-    
-    # Show Buttons
-    buttons = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎬 Video (Auto Best)", callback_data="video")],
-        [InlineKeyboardButton("🎵 Audio (Music)", callback_data="audio")]
-    ])
-    await message.reply_text("👇 **Select Format:**", reply_markup=buttons, quote=True)
-
-# --- 6. DOWNLOAD ENGINE ---
-def run_download(opts, url):
-    with yt_dlp.YoutubeDL(opts)
+    url_store
