@@ -39,19 +39,20 @@ async def handle_link(client, message):
     url = message.text
     if "http" not in url: return
 
-    status_msg = await message.reply_text("🍪 **Using Android Mode with Cookies...**")
+    status_msg = await message.reply_text("📱 **Using Google Phone Mode...**")
 
-    # 👇 మార్పు: iOS తీసేసి Android పెట్టాము. ఇది కుక్కీస్‌తో పనిచేస్తుంది.
+    # 👇 పక్కా ఆండ్రాయిడ్ (Google Phone) సెట్టింగ్స్
     ydl_opts = {
         'format': 'best',
         'outtmpl': f'video_{message.from_user.id}.%(ext)s',
-        'cookiefile': 'cookies.txt', # కుక్కీస్ కచ్చితంగా ఉండాలి
+        'cookiefile': 'cookies.txt',  # కొత్త కుక్కీస్ ఉండాలి
         'quiet': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
+        # ఇది బాట్‌ని "Android Phone" లాగా చూపిస్తుంది
         'extractor_args': {
             'youtube': {
-                'player_client': ['android'], # <--- Android Client (Best for Cookies)
+                'player_client': ['android'],
             }
         }
     }
@@ -69,12 +70,12 @@ async def handle_link(client, message):
             await app.send_video(
                 message.chat.id, 
                 video=filename, 
-                caption="✅ **Downloaded Successfully!**"
+                caption="✅ **Downloaded via Android Mode**"
             )
             os.remove(filename)
             await status_msg.delete()
         else:
-            await status_msg.edit_text("❌ Download Failed. Check Cookie file.")
+            await status_msg.edit_text("❌ Failed. Cookies might be expired.")
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Error: {e}")
