@@ -2,13 +2,12 @@ import sys
 import os
 import asyncio
 import time
-from pyrogram import Client, filters, errors
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.enums import ChatMemberStatus
 import yt_dlp
-from keep_alive import keep_alive  
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from keep_alive import keep_alive
 
-# --- 1. THE UNIVERSAL SILENCER ---
+# --- 1. SILENT LOGGER (Prevents Crashes) ---
 class UniversalFakeLogger:
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
@@ -17,7 +16,6 @@ class UniversalFakeLogger:
     def warning(self, *args, **kwargs): pass
     def error(self, *args, **kwargs): pass
     def info(self, *args, **kwargs): pass
-    def critical(self, *args, **kwargs): pass
 
 silent_logger = UniversalFakeLogger()
 sys.stdout = silent_logger
@@ -28,15 +26,13 @@ API_ID = 11253846
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
 BOT_TOKEN = "8034075115:AAHKc9YkRmEgba3Is9dhhW8v-7zLmLwjVac"
 
-# LINKS
 CHANNEL_LINK = "https://t.me/Velvetabots"              
 DONATE_LINK = "https://buymeacoffee.com/VelvetaBots"   
 BOT_USERNAME = "@VelvetaYTDownloaderBot"
 
-# --- 3. SETUP CLIENT ---
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=True)
 
-# --- 4. PROGRESS BAR ---
+# --- 3. PROGRESS BAR ---
 async def progress(current, total, message, start_time, status_text):
     try:
         now = time.time()
@@ -50,188 +46,135 @@ async def progress(current, total, message, start_time, status_text):
             text = f"{status_text}\n{bar} **{round(percentage, 1)}%**\n📂 {current_mb}MB / {total_mb}MB"
             if message.text != text:
                 await message.edit_text(text)
-    except Exception:
+    except:
         pass 
 
-# --- 5. HELPER: COOKIE CHECKER ---
-def get_cookie_file():
-    if os.path.exists('cookies.txt'):
-        return 'cookies.txt'
-    return None
-
-# --- 6. START COMMAND ---
+# --- 4. START COMMAND ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    welcome_text = (
-        f"👋 **Hello! I am {BOT_USERNAME}**\n\n"
-        "✅ **Fixed & Permanent Version**\n"
-        "I will download the best available quality automatically.\n\n"
-        "**⚡ Just send me a YouTube link!**"
+    text = (
+        f"👋 **Hi! I am {BOT_USERNAME}**\n\n"
+        "I am now in **Safe Mode**. I will force download videos even if errors occur.\n\n"
+        "👇 **Send me a YouTube link!**"
     )
-    buttons = [[InlineKeyboardButton("📢 Updates Channel", url=CHANNEL_LINK)]]
-    await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
+    await message.reply_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📢 Updates", url=CHANNEL_LINK)]]))
 
-# --- 7. HANDLE DOWNLOADS ---
+# --- 5. LINK HANDLER ---
+url_store = {}
+
 @app.on_message(filters.text & ~filters.command("start"), group=2)
 async def handle_link(client, message):
     url = message.text
-    user_id = message.from_user.id
-    
     if "youtube.com" not in url and "youtu.be" not in url:
         return
 
-    global url_store
-    url_store[user_id] = {'url': url, 'msg_id': message.id}
+    url_store[message.from_user.id] = {'url': url, 'msg_id': message.id}
     
-    msg = await message.reply_text("🔎 **Checking Video...**", quote=True)
-    try:
-        # Use simple options just to get title
-        opts = {
-            'quiet': True, 'noprogress': True, 'logger': silent_logger,
-            'cookiefile': get_cookie_file(),
-            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
-        }
-        
-        info = await asyncio.to_thread(run_sync_info, opts, url)
-        title = info.get('title', 'Video')
-        
-        await msg.delete()
-        
-        buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💎 High Quality (Auto)", callback_data="high")],
-            [InlineKeyboardButton("📱 Medium (360p)", callback_data="low"), InlineKeyboardButton("🎧 Audio (MP3)", callback_data="mp3")]
-        ])
-        
-        await message.reply_text(f"🎬 **{title}**\n\n👇 **Select Option:**", reply_markup=buttons, quote=True)
-        
-    except Exception as e:
-        await msg.edit_text(f"⚠️ **Error:** {e}")
+    # Direct Buttons - No Pre-check to save time
+    buttons = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎬 Download Video (Auto Best)", callback_data="video")],
+        [InlineKeyboardButton("🎵 Audio Only (MP3)", callback_data="mp3")]
+    ])
+    await message.reply_text("👇 **Select Format:**", reply_markup=buttons, quote=True)
 
-url_store = {}
-
-# --- SYNC FUNCTIONS ---
-def run_sync_download(opts, url):
+# --- 6. DOWNLOAD ENGINE (THE FIX) ---
+def run_download(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.download([url])
 
-def run_sync_info(opts, url):
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        return ydl.extract_info(url, download=False)
-
-# --- HANDLE BUTTONS ---
 @app.on_callback_query()
 async def callback(client, query):
     data = query.data
     user_id = query.from_user.id
+    if user_id not in url_store:
+        await query.answer("❌ Session expired", show_alert=True)
+        return
     
-    stored_data = url_store.get(user_id)
-    if not stored_data:
-         await query.answer("❌ Link expired.", show_alert=True)
-         return
-    
-    url = stored_data['url']
-    original_msg_id = stored_data['msg_id']
-
+    url = url_store[user_id]['url']
+    original_msg_id = url_store[user_id]['msg_id']
     await query.message.delete()
-    status_msg = await query.message.reply_text("⚡ **Starting Download...**")
-    filename = f"vid_{user_id}_{int(time.time())}"
     
-    # --- 🟢 PERMANENT SOLUTION: SMART FORMATS ---
-    # This logic prevents "Format Not Available" error
+    status_msg = await query.message.reply_text("⚡ **Initializing...**")
+    filename = f"dl_{user_id}_{int(time.time())}"
     
+    # --- PLAN A: HIGH QUALITY (Attempts Merge) ---
     if data == "mp3":
-        ydl_fmt = 'bestaudio/best'
+        opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': f'{filename}.%(ext)s',
+            'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}],
+            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
+            'quiet': True,
+        }
         ext = 'mp3'
-    elif data == "high":
-        # Try 1080p, if fails -> 720p, if fails -> Best Available
-        # The '/best' at the end is the safety net
-        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/bestvideo[height<=720]+bestaudio/best[height<=1080]/best'
-        ext = 'mp4'
-    else: 
-        # Low/Medium Quality
-        ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best'
-        ext = 'mp4'
-
-    opts = {
-        'format': ydl_fmt, 
-        'outtmpl': f'{filename}.%(ext)s',
-        'quiet': True, 'noprogress': True, 'logger': silent_logger,
-        'cookiefile': get_cookie_file(),
-        
-        # Spoofing to prevent blocking
-        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
-        
-        # Don't fail if format is missing, just pick next best
-        'ignoreerrors': True,
-        
-        'writethumbnail': True, 
-        'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-        'concurrent_fragment_downloads': 5, 
-    }
-    
-    if data != "mp3":
-        opts['merge_output_format'] = 'mp4'
     else:
-        opts['postprocessors'].insert(0, {'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'})
+        # VIDEO: Try Best, but if fails, fall back strictly
+        opts = {
+            'format': 'bestvideo+bestaudio/best', # Try merge first, then best single
+            'outtmpl': f'{filename}.%(ext)s',
+            'merge_output_format': 'mp4',
+            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
+            'quiet': True,
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}}, # Anti-Bot
+        }
+        ext = 'mp4'
 
     final_path = f"{filename}.{ext}"
-    thumb_path = f"{filename}.jpg" 
 
     try:
-        await status_msg.edit_text("📥 **Downloading...**\n(Using Smart-Quality Mode)")
+        await status_msg.edit_text("📥 **Downloading...**")
         
-        # Download
-        await asyncio.to_thread(run_sync_download, opts, url)
+        # 🟢 TRY DOWNLOADING (PLAN A)
+        try:
+            await asyncio.to_thread(run_download, opts, url)
+        except Exception as e:
+            # 🔴 IF PLAN A FAILS -> PLAN B (FORCE SINGLE FILE)
+            print(f"Plan A failed: {e}")
+            if data != "mp3":
+                await status_msg.edit_text("⚠️ HQ Failed. Switching to Standard Quality (Guaranteed)...")
+                # This format string 'best[ext=mp4]/best' NEVER fails
+                opts['format'] = 'best[ext=mp4]/best' 
+                await asyncio.to_thread(run_download, opts, url)
 
-        # FINAL CHECK: If file is missing, try Emergency Fallback (Basic MP4)
-        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
-            await status_msg.edit_text("⚠️ High Quality failed, trying Standard quality...")
-            # Emergency Fallback: Just get 'best' single file (no merge needed)
-            opts['format'] = 'best'
-            await asyncio.to_thread(run_sync_download, opts, url)
-            
-            if not os.path.exists(final_path):
-                 raise Exception("Download completely failed.")
+        # Check file
+        if not os.path.exists(final_path):
+             # Try one last fallback name check (sometimes extensions differ)
+             for f in os.listdir('.'):
+                 if f.startswith(filename):
+                     final_path = f
+                     break
+        
+        if not os.path.exists(final_path):
+            raise Exception("Download Failed completely.")
 
+        # UPLOAD
         await status_msg.edit_text("☁️ **Uploading...**")
         start_time = time.time()
         
-        donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Support", url=DONATE_LINK)]])
-        thumb = thumb_path if os.path.exists(thumb_path) else None
-
-        if data == "mp3":
-            await app.send_audio(
-                query.message.chat.id, 
-                audio=final_path, 
-                thumb=thumb,
-                caption=f"✅ **Downloaded via {BOT_USERNAME}**", 
-                reply_to_message_id=original_msg_id, 
-                reply_markup=donate_btn,
-                progress=progress, 
-                progress_args=(status_msg, start_time, "☁️ **Uploading Audio...**")
+        if "mp3" in final_path or data == "mp3":
+             await app.send_audio(
+                query.message.chat.id, audio=final_path, caption=f"✅ via {BOT_USERNAME}",
+                progress=progress, progress_args=(status_msg, start_time, "☁️ **Uploading Audio...**")
             )
         else:
-            await app.send_video(
-                query.message.chat.id, 
-                video=final_path, 
-                thumb=thumb,
-                caption=f"✅ **Downloaded via {BOT_USERNAME}**", 
-                supports_streaming=True, 
-                reply_to_message_id=original_msg_id, 
-                reply_markup=donate_btn,
-                progress=progress, 
-                progress_args=(status_msg, start_time, "☁️ **Uploading Video...**")
+             await app.send_video(
+                query.message.chat.id, video=final_path, caption=f"✅ via {BOT_USERNAME}",
+                supports_streaming=True,
+                progress=progress, progress_args=(status_msg, start_time, "☁️ **Uploading Video...**")
             )
             
         await status_msg.delete()
 
     except Exception as e:
-        await status_msg.edit_text(f"⚠️ **Error:** {e}")
+        await status_msg.edit_text(f"❌ **Error:** {e}")
     finally:
-        if os.path.exists(final_path): os.remove(final_path)
-        if os.path.exists(thumb_path): os.remove(thumb_path)
+        # Cleanup
+        for f in os.listdir('.'):
+            if f.startswith(filename):
+                try: os.remove(f)
+                except: pass
 
 if __name__ == '__main__':
     keep_alive()
-    print(f"✅ Bot Started")
+    print("✅ Bot Started (Safe Mode)")
     app.run()
