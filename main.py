@@ -7,12 +7,12 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
 
-# --- 1. WEB SERVER (Koyeb కోసం) ---
+# --- WEB SERVER ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "Velveta Bot is Alive and Running!"
+    return "Velveta Bot is Alive!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -23,46 +23,35 @@ def start_web_server():
     t.daemon = True
     t.start()
 
-# --- 2. CONFIGURATION ---
+# --- CONFIG ---
 API_ID = 11253846                   
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
 BOT_TOKEN = "8034075115:AAHKc9YkRmEgba3Is9dhhW8v-7zLmLwjVac"
 
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
-# --- 3. COMMANDS ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text(
-        "🌟 **Velveta Downloader (Anti-Bot Mode) Ready!**\n\n"
-        "Send me a link, I will try to bypass YouTube protection! 🛡️",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📢 Join Channel", url="https://t.me/Velvetabots")]])
-    )
+    await message.reply_text("🌟 **Send me a Link! I have Cookies now! 🍪**")
 
 @app.on_message(filters.text & ~filters.command("start"))
 async def handle_link(client, message):
     url = message.text
     if "http" not in url: return
 
-    status_msg = await message.reply_text("⏳ **Bypassing Bot Detection...**")
+    status_msg = await message.reply_text("🍪 **Using Cookies to Login...**")
 
-    # 👇 ఇదే అసలైన ఫిక్స్ (Android Spoofing)
+    # 👇 ఇక్కడ మార్పు: కుక్కీస్ ఫైల్ వాడుతున్నాం
     ydl_opts = {
         'format': 'best[ext=mp4]/best', 
         'outtmpl': f'video_{message.from_user.id}.mp4',
+        'cookiefile': 'cookies.txt',  # <--- ఇదే అసలైన మ్యాజిక్
         'quiet': True,
-        'nocheckcertificate': True,
-        # మనం ఆండ్రాయిడ్ ఫోన్ లాగా నటిస్తున్నాం
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'ios'],
-                'player_skip': ['web', 'tv']
-            }
-        }
+        'nocheckcertificate': True
     }
 
     try:
-        await status_msg.edit_text("⬇️ **Downloading...**")
+        await status_msg.edit_text("⬇️ **Downloading (Signed In)...**")
         
         def run_download():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -77,17 +66,15 @@ async def handle_link(client, message):
             await app.send_video(
                 message.chat.id, 
                 video=filename, 
-                caption="✅ **Downloaded Successfully!**",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate", url="https://buymeacoffee.com/VelvetaBots")]])
+                caption="✅ **Downloaded with Cookies! 🍪**"
             )
             os.remove(filename)
             await status_msg.delete()
         else:
-            await status_msg.edit_text("❌ Failed: YouTube blocked the request.")
+            await status_msg.edit_text("❌ Failed even with cookies. Try updating the cookie file.")
 
     except Exception as e:
-        # ఎర్రర్ వస్తే క్లియర్ గా చూపించు
-        await status_msg.edit_text(f"❌ Error: {str(e)}")
+        await status_msg.edit_text(f"❌ Error: {e}")
 
 if __name__ == '__main__':
     start_web_server()
