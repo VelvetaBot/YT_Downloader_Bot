@@ -2,6 +2,10 @@ import sys
 import os
 import asyncio
 import time
+# --- FIX: AUTO-INSTALL FFMPEG ---
+import static_ffmpeg
+static_ffmpeg.add_paths()
+# --------------------------------
 from pyrogram import Client, filters, errors
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.enums import ChatMemberStatus
@@ -23,7 +27,7 @@ silent_logger = UniversalFakeLogger()
 sys.stdout = silent_logger
 sys.stderr = silent_logger
 
-# --- 2. CONFIGURATION (UPDATED WITH YOUR DETAILS) ---
+# --- 2. CONFIGURATION ---
 API_ID = 11253846                   
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
 BOT_TOKEN = "8034075115:AAHKc9YkRmEgba3Is9dhhW8v-7zLmLwjVac"
@@ -44,7 +48,7 @@ async def progress(current, total, message, start_time, status_text):
         if round(diff % 5.00) == 0 or current == total:
             percentage = current * 100 / total
             filled_blocks = int(percentage / 10)
-            bar = "▰" * filled_blocks + "▱" * (10 - filled_blocks) # New Bar Style
+            bar = "▰" * filled_blocks + "▱" * (10 - filled_blocks) 
             current_mb = round(current / 1024 / 1024, 2)
             total_mb = round(total / 1024 / 1024, 2)
             text = f"{status_text}\n{bar} **{round(percentage, 1)}%**\n📂 {current_mb}MB / {total_mb}MB"
@@ -57,21 +61,14 @@ async def progress(current, total, message, start_time, status_text):
 @app.on_message(filters.group, group=1)
 async def group_moderation(client, message):
     if not message.text: return
-    
-    # 1. Check if User is Admin
     try:
         member = await client.get_chat_member(message.chat.id, message.from_user.id)
         if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR]:
             return 
     except:
         pass 
-
     text = message.text.lower()
-    
-    # 2. Allowed Domains
     allowed_domains = ["youtube.com", "youtu.be", "twitter.com", "x.com", "instagram.com", "tiktok.com"]
-
-    # 3. Logic
     has_allowed_link = any(domain in text for domain in allowed_domains)
     if not has_allowed_link:
         try:
@@ -88,7 +85,7 @@ def run_sync_info(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(url, download=False)
 
-# --- 7. START COMMAND (NEW MESSAGES) ---
+# --- 7. START COMMAND ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
     welcome_text = (
@@ -165,14 +162,15 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⚡ **Initializing download...**")
     filename = f"velveta_{user_id}_{int(time.time())}"
     
+    # --- FLEXIBLE FORMATS (Fixes 'Format Not Available' Error) ---
     if data == "mp3":
         ydl_fmt = 'bestaudio/best'; ext = 'mp3'
     elif data == "1080":
-        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best[height<=1080]'; ext = 'mp4'
+        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'; ext = 'mp4'
     elif data == "720":
-        ydl_fmt = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best[height<=720]'; ext = 'mp4'
+        ydl_fmt = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'; ext = 'mp4'
     else: 
-        ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best[height<=360]'; ext = 'mp4'
+        ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best'; ext = 'mp4'
 
     opts = {
         'format': ydl_fmt, 
@@ -182,6 +180,8 @@ async def callback(client, query):
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'writethumbnail': True, 
         'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
+        
+        # Stability Settings
         'concurrent_fragment_downloads': 5, 
         'retries': 10,
         'fragment_retries': 10,
@@ -196,7 +196,7 @@ async def callback(client, query):
     thumb_path = f"{filename}.jpg" 
 
     try:
-        await status_msg.edit_text("📥 **Fetching content from server...**\n▰▰▰▰▱▱▱▱▱▱ 40%")
+        await status_msg.edit_text("📥 **Fetching content...**\n▰▰▰▰▱▱▱▱▱▱ 40%")
         
         await asyncio.to_thread(run_sync_download, opts, url)
 
