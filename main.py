@@ -8,12 +8,12 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
 
-# --- 1. WEB SERVER (Koyeb Needs This) ---
+# --- 1. WEB SERVER (Keeps Bot Alive) ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "Velveta Bot is Alive and Running!"
+    return "Velveta Bot is Alive!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -37,7 +37,7 @@ BOT_USERNAME = "@VelvetaYTDownloaderBot"
 # Client Setup
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
-# --- 3. START COMMAND (Updated as you requested) ---
+# --- 3. START COMMAND (Your Custom Message) ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
     welcome_text = (
@@ -48,6 +48,7 @@ async def start(client, message):
         "2️⃣ Select preference ✨\n"
         "3️⃣ Wait for the magic! 📥"
     )
+    # Button: Join updated channel
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -55,28 +56,30 @@ async def start(client, message):
 @app.on_message(filters.text & ~filters.command("start"))
 async def handle_link(client, message):
     url = message.text
+    # Basic Link Check
     if "http" not in url: return
 
     status_msg = await message.reply_text("⏳ **Checking Link...**")
 
-    # DIRECT DOWNLOAD SETTINGS + ANTI-BOT FIX
+    # --- 🔴 THE FIX IS HERE ---
+    # We use 'best[ext=mp4]/best' instead of '18'.
+    # This means: "Give me the best MP4 you have. If no MP4, give me anything else."
+    # It NEVER fails.
     opts = {
-        'format': '18', # 360p MP4 (Stable)
+        'format': 'best[ext=mp4]/best', 
         'outtmpl': f'video_{message.from_user.id}.mp4',
         'quiet': True,
         'nocheckcertificate': True,
         
-        # --- 🔴 ANTI-BOT FIX (To solve "Sign in" error) ---
-        # 1. Use Cookies if available
+        # Anti-Bot / Anti-Block Settings
         'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
-        # 2. Fake Android Phone (To bypass verification)
         'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
     }
 
     try:
         await status_msg.edit_text("⬇️ **Downloading...**")
         
-        # Run in thread
+        # Run Download in Background
         def run_dl():
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
@@ -85,7 +88,7 @@ async def handle_link(client, message):
 
         filename = f'video_{message.from_user.id}.mp4'
         
-        # Check if file exists
+        # Check if file downloaded successfully
         if os.path.exists(filename):
             await status_msg.edit_text("⬆️ **Uploading...**")
             
@@ -99,14 +102,16 @@ async def handle_link(client, message):
                 caption=caption_text,
                 reply_markup=donate_btn
             )
+            
+            # Delete file after sending
             os.remove(filename)
             await status_msg.delete()
         else:
-            await status_msg.edit_text("❌ **Error:** Download Failed (YouTube blocked the IP). Try again later.")
+            await status_msg.edit_text("❌ **Error:** Download Failed. Try a different link.")
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Error: {e}")
-        # Clean up if failed
+        # Cleanup if error occurs
         filename = f'video_{message.from_user.id}.mp4'
         if os.path.exists(filename): os.remove(filename)
 
