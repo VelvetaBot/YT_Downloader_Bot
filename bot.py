@@ -1,14 +1,15 @@
-# bot.py - YouTube Downloader Bot using Cobalt API
+# bot.py - YouTube Downloader Bot with Multiple Fallback Methods
 
 import os
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from telegram.constants import ChatAction
+import yt_dlp
 import asyncio
 from aiohttp import web
-import aiohttp
-import re
+import subprocess
+import sys
 
 # Configure logging
 logging.basicConfig(
@@ -17,13 +18,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_USERNAME = "@Velvetabots"
 PORT = int(os.environ.get('PORT', 10000))
-
-# Cobalt API endpoint
-COBALT_API = "https://api.cobalt.tools/api/json"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message"""
@@ -38,7 +35,13 @@ How to use:
 2️⃣ Select Quality ✨
 3️⃣ Wait for the magic! 📥
 
-✨ Powered by Cobalt API - Fast & Reliable!
+⚠️ **Works best with:**
+• Music videos
+• Short videos (under 15 minutes)
+• Popular channel videos
+• Non-restricted content
+
+💡 Some videos may fail due to YouTube's strict policies.
 """
     
     keyboard = [[InlineKeyboardButton("📢 Join Update Channel", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")]]
@@ -46,63 +49,33 @@ How to use:
     
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-def extract_video_id(url):
-    """Extract YouTube video ID from URL"""
-    patterns = [
-        r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
-        r'(?:embed\/)([0-9A-Za-z_-]{11})',
-        r'(?:watch\?v=)([0-9A-Za-z_-]{11})'
-    ]
+def get_ydl_opts(for_download=False):
+    """Get yt-dlp options with multiple extraction methods"""
+    opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': False,
+        'force_generic_extractor': False,
+        'age_limit': 21,
+        # Try multiple clients
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'mweb', 'android'],
+                'skip': ['translated_subs'],
+            }
+        },
+        # Use mobile user agent
+        'http_headers': {
+            'User-Agent': 'com.google.android.youtube/19.02.39 (Linux; U; Android 11) gzip',
+            'Accept-Language': 'en-US,en;q=0.9',
+        },
+    }
     
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
-    return None
-
-async def get_video_info(url):
-    """Get video info using Cobalt API"""
-    try:
-        async with aiohttp.ClientSession() as session:
-            payload = {
-                "url": url,
-                "vCodec": "h264",
-                "vQuality": "720",
-                "aFormat": "mp3",
-                "isAudioOnly": False,
-                "filenamePattern": "basic"
-            }
-            
-            headers = {
-                "Accept": "application/json",
-                "Content-Type": "application/json"
-            }
-            
-            async with session.post(COBALT_API, json=payload, headers=headers, timeout=30) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data
-                else:
-                    logger.error(f"Cobalt API error: {response.status}")
-                    return None
-    except Exception as e:
-        logger.error(f"Error getting video info: {e}")
-        return None
-
-async def download_file(url, filename):
-    """Download file from URL"""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=300) as response:
-                if response.status == 200:
-                    with open(filename, 'wb') as f:
-                        async for chunk in response.content.iter_chunked(1024 * 1024):
-                            f.write(chunk)
-                    return True
-                return False
-    except Exception as e:
-        logger.error(f"Download error: {e}")
-        return False
+    if for_download:
+        opts['quiet'] = False
+        opts['no_warnings'] = False
+    
+    return opts
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle YouTube URL"""
@@ -115,71 +88,113 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Please send a valid YouTube link!")
         return
     
-    # Extract video ID for thumbnail
-    video_id = extract_video_id(url)
-    
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     
-    # Show processing message
-    processing_msg = await update.message.reply_text("🔍 Processing your video...\n⏳ Please wait...")
+    processing_msg = await update.message.reply_text("🔍 Checking video...\n⏳ Please wait...")
     
     try:
-        # Get video info from Cobalt
-        result = await get_video_info(url)
+        # Try multiple extraction methods
+        info = None
+        methods = [
+            {'player_client': ['ios']},
+            {'player_client': ['mweb']},
+            {'player_client': ['android']},
+            {'player_client': ['android', 'ios']},
+        ]
         
-        if not result:
+        for idx, method in enumerate(methods):
+            try:
+                logger.info(f"Trying method {idx + 1}: {method}")
+                opts = get_ydl_opts()
+                opts['extractor_args']['youtube'] = method
+                
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    
+                if info:
+                    logger.info(f"Success with method {idx + 1}")
+                    break
+            except Exception as e:
+                logger.warning(f"Method {idx + 1} failed: {str(e)[:100]}")
+                continue
+        
+        if not info:
             await processing_msg.edit_text(
-                "❌ Could not process this video.\n\n"
-                "Please try:\n"
+                "❌ Could not access this video.\n\n"
+                "**Possible reasons:**\n"
+                "• Age-restricted content\n"
+                "• Members-only video\n"
+                "• Geographic restrictions\n"
+                "• Very recent upload\n\n"
+                "💡 **Try:**\n"
                 "• A different video\n"
-                "• Checking if the link is correct"
+                "• A popular music video\n"
+                "• An older upload (24+ hours)"
             )
             return
         
-        # Check if we got an error from Cobalt
-        if result.get('status') == 'error':
-            error_text = result.get('text', 'Unknown error')
-            await processing_msg.edit_text(f"❌ Error: {error_text}")
-            return
+        title = info.get('title', 'Unknown')
+        duration = info.get('duration', 0)
+        thumbnail = info.get('thumbnail', '')
+        uploader = info.get('uploader', 'Unknown')
         
-        # Store data in context
         context.user_data['url'] = url
-        context.user_data['video_id'] = video_id
-        context.user_data['cobalt_data'] = result
+        context.user_data['title'] = title
         
-        # Create quality options
         keyboard = [
             [InlineKeyboardButton("🎬 Best Quality", callback_data='best')],
             [InlineKeyboardButton("📹 720p", callback_data='720')],
             [InlineKeyboardButton("📱 480p", callback_data='480')],
-            [InlineKeyboardButton("🎵 Audio Only (MP3)", callback_data='audio')],
+            [InlineKeyboardButton("🎵 Audio Only", callback_data='audio')],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        caption = f"✅ **Video Ready!**\n\n🔗 Link processed successfully\n\n✨ Select quality to download:"
+        mins = duration // 60 if duration else 0
+        secs = duration % 60 if duration else 0
         
-        # Try to show thumbnail
-        if video_id:
-            thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
-            try:
-                await processing_msg.delete()
+        caption = f"✅ **Video Found!**\n\n"
+        caption += f"📺 {title}\n"
+        caption += f"👤 {uploader}\n"
+        caption += f"⏱ {mins}:{secs:02d}\n\n"
+        caption += f"✨ Select quality:"
+        
+        try:
+            await processing_msg.delete()
+            if thumbnail:
                 await update.message.reply_photo(
-                    photo=thumbnail_url,
+                    photo=thumbnail,
                     caption=caption,
                     reply_markup=reply_markup,
                     parse_mode='Markdown'
                 )
-            except:
-                await processing_msg.edit_text(caption, reply_markup=reply_markup, parse_mode='Markdown')
-        else:
-            await processing_msg.edit_text(caption, reply_markup=reply_markup, parse_mode='Markdown')
+            else:
+                await update.message.reply_text(
+                    caption,
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
+                )
+        except:
+            await processing_msg.edit_text(
+                caption,
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
             
     except Exception as e:
-        logger.error(f"Error handling URL: {e}")
+        logger.error(f"Error: {e}")
         await processing_msg.edit_text(
-            "❌ An error occurred while processing your video.\n"
-            "Please try again or use a different link."
+            "❌ An error occurred.\n\n"
+            "Please try:\n"
+            "• A different video\n"
+            "• Waiting 2-3 minutes\n"
+            "• A popular/older video"
         )
+
+def progress_hook(d):
+    """Progress hook"""
+    if d['status'] == 'downloading':
+        percent = d.get('_percent_str', 'N/A')
+        logger.info(f"Downloading: {percent}")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quality selection"""
@@ -188,90 +203,89 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     quality = query.data
     url = context.user_data.get('url')
-    video_id = context.user_data.get('video_id')
+    title = context.user_data.get('title', 'video')
     
     if not url:
-        await query.edit_message_caption(caption="❌ Session expired. Please send the link again.")
+        await query.edit_message_caption(caption="❌ Session expired. Send link again.")
         return
     
     download_msg = await query.message.reply_text(
-        "⬇️ **Processing your request...**\n🔄 Please wait...",
+        "⬇️ **Starting download...**\n🔄 This may take a moment...",
         parse_mode='Markdown'
     )
     
     filename = None
     
     try:
-        # Prepare Cobalt API request based on quality
-        payload = {
-            "url": url,
-            "vCodec": "h264",
-            "aFormat": "mp3",
-            "filenamePattern": "basic"
-        }
-        
-        if quality == 'audio':
-            payload["isAudioOnly"] = True
-            payload["aFormat"] = "mp3"
+        # Format selection
+        if quality == 'best':
+            format_opt = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]'
+        elif quality == '720':
+            format_opt = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]'
+        elif quality == '480':
+            format_opt = 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]'
+        elif quality == 'audio':
+            format_opt = 'bestaudio[ext=m4a]/bestaudio'
         else:
-            payload["isAudioOnly"] = False
-            if quality == 'best':
-                payload["vQuality"] = "max"
-            elif quality == '720':
-                payload["vQuality"] = "720"
-            elif quality == '480':
-                payload["vQuality"] = "480"
-            else:
-                payload["vQuality"] = "720"
+            format_opt = 'best[height<=720]'
         
-        await download_msg.edit_text(
-            "⬇️ **Downloading...**\n🔄 Getting download link...",
-            parse_mode='Markdown'
-        )
-        
-        # Get download link from Cobalt
-        async with aiohttp.ClientSession() as session:
-            headers = {
-                "Accept": "application/json",
-                "Content-Type": "application/json"
-            }
-            
-            async with session.post(COBALT_API, json=payload, headers=headers, timeout=30) as response:
-                if response.status != 200:
-                    await download_msg.edit_text("❌ Failed to get download link. Try again.")
-                    return
-                
-                result = await response.json()
-        
-        # Check result status
-        if result.get('status') == 'error':
-            error_text = result.get('text', 'Unknown error')
-            await download_msg.edit_text(f"❌ Error: {error_text}")
-            return
-        
-        # Get download URL
-        download_url = result.get('url')
-        if not download_url:
-            await download_msg.edit_text("❌ Could not get download link. Try another video.")
-            return
-        
-        await download_msg.edit_text(
-            "⬇️ **Downloading...**\n📥 Downloading from server...",
-            parse_mode='Markdown'
-        )
-        
-        # Create downloads directory
         os.makedirs('downloads', exist_ok=True)
+        output_template = 'downloads/%(title).50s.%(ext)s'
         
-        # Set filename
-        ext = 'mp3' if quality == 'audio' else 'mp4'
-        filename = f'downloads/video_{video_id or "download"}.{ext}'
+        # Try download with multiple methods
+        success = False
+        methods = [
+            {'player_client': ['ios']},
+            {'player_client': ['mweb']},
+            {'player_client': ['android']},
+        ]
         
-        # Download the file
-        success = await download_file(download_url, filename)
+        for idx, method in enumerate(methods):
+            try:
+                logger.info(f"Download attempt {idx + 1}")
+                
+                opts = get_ydl_opts(for_download=True)
+                opts.update({
+                    'format': format_opt,
+                    'outtmpl': output_template,
+                    'progress_hooks': [progress_hook],
+                })
+                opts['extractor_args']['youtube'] = method
+                
+                if quality == 'audio':
+                    opts['postprocessors'] = [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '192',
+                    }]
+                
+                await download_msg.edit_text(
+                    f"⬇️ **Downloading... (Attempt {idx + 1})**\n📥 Please wait...",
+                    parse_mode='Markdown'
+                )
+                
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info)
+                    
+                    if quality == 'audio':
+                        filename = os.path.splitext(filename)[0] + '.mp3'
+                
+                if os.path.exists(filename):
+                    success = True
+                    logger.info(f"Download success with method {idx + 1}")
+                    break
+                    
+            except Exception as e:
+                logger.warning(f"Download method {idx + 1} failed: {str(e)[:100]}")
+                continue
         
-        if not success or not os.path.exists(filename):
-            await download_msg.edit_text("❌ Download failed. Please try again.")
+        if not success or not filename or not os.path.exists(filename):
+            await download_msg.edit_text(
+                "❌ Download failed after multiple attempts.\n\n"
+                "This video may have strong restrictions.\n"
+                "Try a different video."
+            )
             return
         
         # Check file size
@@ -281,19 +295,28 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if file_size > 2000 * 1024 * 1024:
             await download_msg.edit_text(
                 f"❌ File too large ({file_size_mb:.1f}MB).\n"
-                "Telegram limit is 2GB. Try a lower quality."
+                "Telegram limit: 2GB\n"
+                "Try lower quality."
             )
             os.remove(filename)
             return
         
+        # Check minimum size
+        if file_size < 1024:  # Less than 1KB
+            await download_msg.edit_text("❌ Download failed - file too small.")
+            os.remove(filename)
+            return
+        
         await download_msg.edit_text(
-            f"⬆️ **Uploading...**\n📤 Size: {file_size_mb:.1f}MB\n⏳ Sending to Telegram...",
+            f"⬆️ **Uploading to Telegram...**\n"
+            f"📤 Size: {file_size_mb:.1f}MB\n"
+            f"⏳ Please wait...",
             parse_mode='Markdown'
         )
         
-        caption_text = f"✅ **Downloaded via @Velveta_YT_Downloader_bot**\n\n📹 Your video is ready!"
+        caption_text = f"✅ **Downloaded via @Velveta_YT_Downloader_bot**\n\n📹 {title[:100]}"
         
-        # Send file
+        # Upload to Telegram
         if quality == 'audio':
             with open(filename, 'rb') as f:
                 await context.bot.send_audio(
@@ -318,23 +341,26 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await download_msg.delete()
         
-        keyboard = [[InlineKeyboardButton("☕ Support Us", url="https://t.me/Velvetabots")]]
+        keyboard = [[InlineKeyboardButton("☕ Support", url="https://t.me/Velvetabots")]]
         await query.message.reply_text(
-            "✅ Download complete!\n\nEnjoy your video! 🎉",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "✅ **Download Complete!** 🎉\n\nEnjoy your video!",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
         )
         
-    except asyncio.TimeoutError:
-        await download_msg.edit_text("❌ Download timeout. The video might be too large. Try a shorter video.")
     except Exception as e:
-        logger.error(f"Download error: {e}")
-        await download_msg.edit_text(f"❌ Error: {str(e)[:150]}\n\nPlease try again.")
+        logger.error(f"Error: {e}")
+        await download_msg.edit_text(
+            f"❌ Upload failed.\n\n"
+            f"Error: {str(e)[:100]}\n\n"
+            "The file may be too large or corrupted."
+        )
         
     finally:
         if filename and os.path.exists(filename):
             try:
                 os.remove(filename)
-                logger.info(f"Cleaned up: {filename}")
+                logger.info("File cleaned up")
             except:
                 pass
 
@@ -343,11 +369,11 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Error: {context.error}")
 
 async def health_check(request):
-    """Health check endpoint"""
-    return web.Response(text="Bot is running! 🚀")
+    """Health check"""
+    return web.Response(text="Bot running! 🚀")
 
 async def start_web_server():
-    """Start web server for health checks"""
+    """Start web server"""
     app = web.Application()
     app.router.add_get('/', health_check)
     app.router.add_get('/health', health_check)
@@ -356,13 +382,21 @@ async def start_web_server():
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', PORT)
     await site.start()
-    logger.info(f"Web server started on port {PORT}")
+    logger.info(f"Web server: port {PORT}")
 
 async def start_bot():
-    """Start the Telegram bot"""
+    """Start bot"""
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN not set!")
         return
+    
+    # Update yt-dlp
+    try:
+        logger.info("Updating yt-dlp...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "--no-cache-dir", "yt-dlp"])
+        logger.info("yt-dlp updated!")
+    except:
+        logger.warning("Could not update yt-dlp")
     
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_error_handler(error_handler)
@@ -374,17 +408,14 @@ async def start_bot():
     await application.start()
     await application.updater.start_polling()
     
-    logger.info("Bot started successfully! 🎉")
+    logger.info("Bot started! 🎉")
     
     while True:
         await asyncio.sleep(1)
 
 async def main():
-    """Main entry point"""
-    await asyncio.gather(
-        start_web_server(),
-        start_bot()
-    )
+    """Main"""
+    await asyncio.gather(start_web_server(), start_bot())
 
 if __name__ == '__main__':
     asyncio.run(main())
