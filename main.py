@@ -4,7 +4,7 @@ import asyncio
 import time
 import threading
 from flask import Flask
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
 
@@ -53,8 +53,8 @@ async def progress(current, total, message, start_time, status_text):
 async def start(client, message):
     await message.reply_text(
         f"👋 **Hello! I am {BOT_USERNAME}**\n\n"
-        "✅ **System Status: Stable**\n"
-        "I can download Video & Audio safely.\n\n"
+        "✅ **System Status: Online**\n"
+        "I am ready to download.\n\n"
         "👇 **Send me a YouTube link!**",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📢 Updates", url=CHANNEL_LINK)]])
     )
@@ -65,8 +65,98 @@ url_store = {}
 @app.on_message(filters.text & ~filters.command("start"), group=2)
 async def handle_link(client, message):
     url = message.text
-    # Basic check
     if "http" not in url: return
 
-    # Store URL for the button click
-    url_store
+    url_store[message.from_user.id] = {'url': url, 'msg_id': message.id}
+    
+    buttons = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎬 Video (Auto Best)", callback_data="video")],
+        [InlineKeyboardButton("🎵 Audio (Music)", callback_data="audio")]
+    ])
+    await message.reply_text("👇 **Select Format:**", reply_markup=buttons, quote=True)
+
+# --- 6. DOWNLOAD ENGINE ---
+def run_download(opts, url):
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        return ydl.download([url])
+
+@app.on_callback_query()
+async def callback(client, query):
+    data = query.data
+    user_id = query.from_user.id
+    
+    if user_id not in url_store:
+        await query.answer("❌ Session expired.", show_alert=True)
+        return
+    
+    url = url_store[user_id]['url']
+    await query.message.delete()
+    
+    status_msg = await query.message.reply_text("⚡ **Processing...**")
+    filename = f"dl_{user_id}_{int(time.time())}"
+
+    if data == "audio":
+        ydl_fmt = 'bestaudio[ext=m4a]/bestaudio/best'
+        ext = 'm4a'
+        upload_func = app.send_audio
+        type_str = "Audio"
+    else:
+        ydl_fmt = 'best[ext=mp4]/best'
+        ext = 'mp4'
+        upload_func = app.send_video
+        type_str = "Video"
+
+    opts = {
+        'format': ydl_fmt,
+        'outtmpl': f'{filename}.%(ext)s',
+        'quiet': True,
+        'nocheckcertificate': True,
+        'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
+    }
+
+    final_path = f"{filename}.{ext}"
+    
+    try:
+        await status_msg.edit_text(f"⬇️ **Downloading {type_str}...**")
+        await asyncio.to_thread(run_download, opts, url)
+
+        if not os.path.exists(final_path):
+             for f in os.listdir('.'):
+                 if f.startswith(filename) and not f.endswith('.jpg'):
+                     final_path = f
+                     break
+        
+        if not os.path.exists(final_path): raise Exception("Download failed.")
+
+        await status_msg.edit_text(f"⬆️ **Uploading {type_str}...**")
+        start_time = time.time()
+        
+        await upload_func(
+            query.message.chat.id, 
+            final_path, 
+            caption=f"✅ **Downloaded via {BOT_USERNAME}**",
+            progress=progress, 
+            progress_args=(status_msg, start_time, f"⬆️ **Uploading {type_str}...**")
+        )
+        await status_msg.delete()
+
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error: {e}")
+    finally:
+        for f in os.listdir('.'):
+            if f.startswith(filename):
+                try: os.remove(f)
+                except: pass
+
+# --- 7. MAIN LOOP (PREVENTS EXIT CODE 0) ---
+async def main():
+    print("🌍 Starting Web Server...")
+    start_web_server()
+    print("🤖 Starting Bot Client...")
+    await app.start()
+    print("✅ Bot is Running! (Press Ctrl+C to stop)")
+    await idle()  # <--- This is the magic line that keeps it alive
+    await app.stop()
+
+if __name__ == '__main__':
+    app.run(main())
