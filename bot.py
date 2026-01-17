@@ -1,4 +1,4 @@
-# bot.py - YouTube Downloader Bot with Web Server for Render
+# bot.py - YouTube Downloader Bot with Enhanced Bot Detection Bypass
 
 import os
 import logging
@@ -33,6 +33,8 @@ How to use:
 1️⃣ Send a YouTube link 🔗
 2️⃣ Select Quality ✨
 3️⃣ Wait for the magic! 📥
+
+⚠️ Note: Some videos may not be available due to YouTube restrictions.
 """
     
     keyboard = [[InlineKeyboardButton("📢 Join Update Channel", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")]]
@@ -56,31 +58,47 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Show typing action
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     
-    # Fetch video info with updated options to bypass bot detection
+    # Fetch video info with enhanced options
     try:
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
             'no_color': True,
             'extract_flat': False,
-            # Add headers to bypass bot detection
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
-                'Sec-Fetch-Mode': 'navigate',
-            },
-            # Additional options to help with extraction
+            'nocheckcertificate': True,
+            'ignoreerrors': False,
+            'geo_bypass': True,
+            'age_limit': None,
+            # Use multiple methods to extract info
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'web'],
-                    'player_skip': ['webpage', 'configs'],
+                    'player_client': ['android', 'web', 'ios', 'tv_embedded'],
+                    'skip': ['hls', 'dash'],
                 }
+            },
+            # Enhanced headers
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Cache-Control': 'max-age=0',
             },
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
+            
+            if not info:
+                await update.message.reply_text("❌ Could not extract video information. The video might be unavailable.")
+                return
+            
             title = info.get('title', 'Unknown')
             duration = info.get('duration', 0)
             thumbnail = info.get('thumbnail', '')
@@ -103,12 +121,19 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption = f"📺 **{title}**\n⏱ Duration: {mins}:{secs:02d}\n\n✨ Select quality:"
             
             if thumbnail:
-                await update.message.reply_photo(
-                    photo=thumbnail,
-                    caption=caption,
-                    reply_markup=reply_markup,
-                    parse_mode='Markdown'
-                )
+                try:
+                    await update.message.reply_photo(
+                        photo=thumbnail,
+                        caption=caption,
+                        reply_markup=reply_markup,
+                        parse_mode='Markdown'
+                    )
+                except:
+                    await update.message.reply_text(
+                        caption,
+                        reply_markup=reply_markup,
+                        parse_mode='Markdown'
+                    )
             else:
                 await update.message.reply_text(
                     caption,
@@ -116,21 +141,38 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='Markdown'
                 )
                 
-    except Exception as e:
-        logger.error(f"Error fetching video info: {e}")
-        error_msg = "❌ Error fetching video information.\n\n"
+    except yt_dlp.utils.DownloadError as e:
+        error_str = str(e)
+        logger.error(f"DownloadError: {error_str}")
         
-        if "Sign in to confirm" in str(e) or "bot" in str(e).lower():
-            error_msg += "YouTube is detecting automated requests. This can happen when:\n"
-            error_msg += "• The video has age restrictions\n"
-            error_msg += "• The video is private\n"
-            error_msg += "• Too many requests from the server\n\n"
-            error_msg += "Try another video or wait a few minutes and try again."
+        if "Sign in to confirm" in error_str or "not a bot" in error_str:
+            await update.message.reply_text(
+                "❌ YouTube blocked this request.\n\n"
+                "This can happen when:\n"
+                "• YouTube detects automated traffic\n"
+                "• The video requires age verification\n"
+                "• Geographic restrictions apply\n\n"
+                "💡 Try:\n"
+                "• A different video\n"
+                "• Waiting 2-3 minutes\n"
+                "• A public, non-restricted video"
+            )
+        elif "Private video" in error_str:
+            await update.message.reply_text("❌ This video is private and cannot be downloaded.")
+        elif "Video unavailable" in error_str:
+            await update.message.reply_text("❌ This video is unavailable in this region or has been deleted.")
         else:
-            error_msg += "Please check the URL and try again.\n"
-            error_msg += f"Error: {str(e)[:100]}"
-        
-        await update.message.reply_text(error_msg)
+            await update.message.reply_text(
+                f"❌ Could not fetch video information.\n\n"
+                f"Error: {error_str[:150]}\n\n"
+                "Please try another video or check if the link is correct."
+            )
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        await update.message.reply_text(
+            "❌ An unexpected error occurred.\n"
+            "Please try again or contact support."
+        )
 
 def progress_hook(d):
     """Progress hook for yt-dlp"""
@@ -185,18 +227,26 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'quiet': False,
             'no_warnings': False,
             'progress_hooks': [progress_hook],
-            # Add same headers for download
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
-                'Sec-Fetch-Mode': 'navigate',
-            },
+            'nocheckcertificate': True,
+            'ignoreerrors': False,
+            'geo_bypass': True,
+            'age_limit': None,
+            # Enhanced extraction methods
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'web'],
-                    'player_skip': ['webpage', 'configs'],
+                    'player_client': ['android', 'web', 'ios', 'tv_embedded'],
+                    'skip': ['hls', 'dash'],
                 }
+            },
+            # Enhanced headers for download
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
             },
         }
         
@@ -284,19 +334,22 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text("✅ Download complete!", reply_markup=reply_markup)
         
+    except yt_dlp.utils.DownloadError as e:
+        error_str = str(e)
+        logger.error(f"Download error: {error_str}")
+        
+        if "Sign in to confirm" in error_str:
+            await download_msg.edit_text(
+                "❌ YouTube blocked this download.\n\n"
+                "The video may have restrictions.\n"
+                "Try a different video."
+            )
+        else:
+            await download_msg.edit_text(f"❌ Download failed: {error_str[:150]}")
+            
     except Exception as e:
         logger.error(f"Error downloading video: {e}")
-        error_msg = "❌ Download failed.\n\n"
-        
-        if "Sign in to confirm" in str(e) or "bot" in str(e).lower():
-            error_msg += "YouTube blocked the request. Try:\n"
-            error_msg += "• A different video\n"
-            error_msg += "• Waiting a few minutes\n"
-            error_msg += "• Using a shorter video"
-        else:
-            error_msg += f"Error: {str(e)[:150]}"
-        
-        await download_msg.edit_text(error_msg)
+        await download_msg.edit_text(f"❌ Error: {str(e)[:150]}")
         
     finally:
         # Clean up the file
