@@ -4,7 +4,7 @@ import asyncio
 import time
 import yt_dlp
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from keep_alive import keep_alive
 
 # --- 1. SILENT LOGGER (Prevents Crashes) ---
@@ -12,10 +12,6 @@ class UniversalFakeLogger:
     def write(self, *args, **kwargs): pass
     def flush(self, *args, **kwargs): pass
     def isatty(self): return False
-    def debug(self, *args, **kwargs): pass
-    def warning(self, *args, **kwargs): pass
-    def error(self, *args, **kwargs): pass
-    def info(self, *args, **kwargs): pass
 
 silent_logger = UniversalFakeLogger()
 sys.stdout = silent_logger
@@ -39,11 +35,8 @@ async def progress(current, total, message, start_time, status_text):
         diff = now - start_time
         if round(diff % 5.00) == 0 or current == total:
             percentage = current * 100 / total
-            filled_blocks = int(percentage / 10)
-            bar = "▰" * filled_blocks + "▱" * (10 - filled_blocks)
-            current_mb = round(current / 1024 / 1024, 2)
-            total_mb = round(total / 1024 / 1024, 2)
-            text = f"{status_text}\n{bar} **{round(percentage, 1)}%**\n📂 {current_mb}MB / {total_mb}MB"
+            bar = "▰" * int(percentage / 10) + "▱" * (10 - int(percentage / 10))
+            text = f"{status_text}\n{bar} **{round(percentage, 1)}%**"
             if message.text != text:
                 await message.edit_text(text)
     except:
@@ -54,10 +47,12 @@ async def progress(current, total, message, start_time, status_text):
 async def start(client, message):
     text = (
         f"👋 **Hi! I am {BOT_USERNAME}**\n\n"
-        "I am now in **Safe Mode**. I will force download videos even if errors occur.\n\n"
+        "✅ **Simple Mode Active**\n"
+        "I will download videos instantly without errors.\n\n"
         "👇 **Send me a YouTube link!**"
     )
-    await message.reply_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📢 Updates", url=CHANNEL_LINK)]]))
+    buttons = [[InlineKeyboardButton("📢 Updates", url=CHANNEL_LINK)]]
+    await message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
 # --- 5. LINK HANDLER ---
 url_store = {}
@@ -70,14 +65,14 @@ async def handle_link(client, message):
 
     url_store[message.from_user.id] = {'url': url, 'msg_id': message.id}
     
-    # Direct Buttons - No Pre-check to save time
+    # Simple Buttons to avoid confusion
     buttons = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎬 Download Video (Auto Best)", callback_data="video")],
-        [InlineKeyboardButton("🎵 Audio Only (MP3)", callback_data="mp3")]
+        [InlineKeyboardButton("🎬 Download Video", callback_data="video")],
+        [InlineKeyboardButton("🎵 Download Audio", callback_data="mp3")]
     ])
-    await message.reply_text("👇 **Select Format:**", reply_markup=buttons, quote=True)
+    await message.reply_text("👇 **Select:**", reply_markup=buttons, quote=True)
 
-# --- 6. DOWNLOAD ENGINE (THE FIX) ---
+# --- 6. DOWNLOAD LOGIC ---
 def run_download(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.download([url])
@@ -94,73 +89,77 @@ async def callback(client, query):
     original_msg_id = url_store[user_id]['msg_id']
     await query.message.delete()
     
-    status_msg = await query.message.reply_text("⚡ **Initializing...**")
+    status_msg = await query.message.reply_text("⚡ **Processing...**")
     filename = f"dl_{user_id}_{int(time.time())}"
     
-    # --- PLAN A: HIGH QUALITY (Attempts Merge) ---
+    # --- 🟢 FAIL-SAFE CONFIGURATION ---
+    # We stopped asking for 'bestvideo+bestaudio'.
+    # Now we just ask for 'best'. This avoids merging errors completely.
+    
     if data == "mp3":
-        opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': f'{filename}.%(ext)s',
-            'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}],
-            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
-            'quiet': True,
-        }
+        ydl_fmt = 'bestaudio/best'
         ext = 'mp3'
+        post_proc = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}]
     else:
-        # VIDEO: Try Best, but if fails, fall back strictly
-        opts = {
-            'format': 'bestvideo+bestaudio/best', # Try merge first, then best single
-            'outtmpl': f'{filename}.%(ext)s',
-            'merge_output_format': 'mp4',
-            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
-            'quiet': True,
-            'extractor_args': {'youtube': {'player_client': ['android', 'web']}}, # Anti-Bot
-        }
+        # VIDEO: Request best single file available (mp4 preferred)
+        ydl_fmt = 'best[ext=mp4]/best'
         ext = 'mp4'
+        post_proc = [] # No processing, just raw download
+
+    opts = {
+        'format': ydl_fmt,
+        'outtmpl': f'{filename}.%(ext)s',
+        'quiet': True,
+        'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
+        'writethumbnail': True,
+        'postprocessors': post_proc,
+        # Fake Android to prevent blocks
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+    }
 
     final_path = f"{filename}.{ext}"
+    thumb_path = f"{filename}.webp" # Youtube often gives webp thumbnails now
 
     try:
         await status_msg.edit_text("📥 **Downloading...**")
         
-        # 🟢 TRY DOWNLOADING (PLAN A)
-        try:
-            await asyncio.to_thread(run_download, opts, url)
-        except Exception as e:
-            # 🔴 IF PLAN A FAILS -> PLAN B (FORCE SINGLE FILE)
-            print(f"Plan A failed: {e}")
-            if data != "mp3":
-                await status_msg.edit_text("⚠️ HQ Failed. Switching to Standard Quality (Guaranteed)...")
-                # This format string 'best[ext=mp4]/best' NEVER fails
-                opts['format'] = 'best[ext=mp4]/best' 
-                await asyncio.to_thread(run_download, opts, url)
+        await asyncio.to_thread(run_download, opts, url)
 
-        # Check file
+        # File check logic
         if not os.path.exists(final_path):
-             # Try one last fallback name check (sometimes extensions differ)
-             for f in os.listdir('.'):
-                 if f.startswith(filename):
-                     final_path = f
-                     break
+            # Sometimes extension changes, find any file starting with filename
+            for f in os.listdir('.'):
+                if f.startswith(filename) and not f.endswith('.part'):
+                    final_path = f
+                    break
         
         if not os.path.exists(final_path):
-            raise Exception("Download Failed completely.")
+            raise Exception("Download Failed. Try again.")
 
-        # UPLOAD
         await status_msg.edit_text("☁️ **Uploading...**")
         start_time = time.time()
         
+        # Check if thumbnail exists, otherwise None
+        thumb = None
+        for f in os.listdir('.'):
+             if f.startswith(filename) and (f.endswith('.jpg') or f.endswith('.webp') or f.endswith('.png')):
+                 thumb = f
+                 break
+
+        donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Support", url=DONATE_LINK)]])
+
         if "mp3" in final_path or data == "mp3":
              await app.send_audio(
-                query.message.chat.id, audio=final_path, caption=f"✅ via {BOT_USERNAME}",
-                progress=progress, progress_args=(status_msg, start_time, "☁️ **Uploading Audio...**")
+                query.message.chat.id, audio=final_path, thumb=thumb, caption=f"✅ via {BOT_USERNAME}",
+                progress=progress, progress_args=(status_msg, start_time, "☁️ **Uploading Audio...**"),
+                reply_markup=donate_btn
             )
         else:
              await app.send_video(
-                query.message.chat.id, video=final_path, caption=f"✅ via {BOT_USERNAME}",
+                query.message.chat.id, video=final_path, thumb=thumb, caption=f"✅ via {BOT_USERNAME}",
                 supports_streaming=True,
-                progress=progress, progress_args=(status_msg, start_time, "☁️ **Uploading Video...**")
+                progress=progress, progress_args=(status_msg, start_time, "☁️ **Uploading Video...**"),
+                reply_markup=donate_btn
             )
             
         await status_msg.delete()
@@ -168,7 +167,7 @@ async def callback(client, query):
     except Exception as e:
         await status_msg.edit_text(f"❌ **Error:** {e}")
     finally:
-        # Cleanup
+        # Clean up all files with that ID
         for f in os.listdir('.'):
             if f.startswith(filename):
                 try: os.remove(f)
@@ -176,5 +175,5 @@ async def callback(client, query):
 
 if __name__ == '__main__':
     keep_alive()
-    print("✅ Bot Started (Safe Mode)")
+    print("✅ Bot Started (Simple Mode)")
     app.run()
