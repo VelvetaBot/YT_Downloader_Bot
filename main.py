@@ -8,12 +8,12 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
 
-# --- 1. WEB SERVER (Koyeb Needs This) ---
+# --- 1. WEB SERVER (Koyeb needs this) ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "Velveta Bot is Alive!"
+    return "Velveta Bot is Alive and Running!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -37,7 +37,7 @@ BOT_USERNAME = "@VelvetaYTDownloaderBot"
 # Client Setup
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
-# --- 3. START COMMAND (Your Custom Message) ---
+# --- 3. START COMMAND ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
     welcome_text = (
@@ -45,10 +45,9 @@ async def start(client, message):
         "I can download videos **up to 2GB!** 🚀\n\n"
         "**How to use:**\n"
         "1️⃣ Send a YouTube link 🔗\n"
-        "2️⃣ Select preference ✨\n"
-        "3️⃣ Wait for the magic! 📥"
+        "2️⃣ Wait for the magic! 📥\n"
+        "3️⃣ Get High Speed Download ⚡"
     )
-    # Button: Join updated channel
     buttons = [[InlineKeyboardButton("📢 Join Update Channel", url=CHANNEL_LINK)]]
     await message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -56,5 +55,62 @@ async def start(client, message):
 @app.on_message(filters.text & ~filters.command("start"))
 async def handle_link(client, message):
     url = message.text
-    # Basic Link Check
-    if "http"
+    # Check if it looks like a link
+    if "http" not in url: 
+        return
+
+    status_msg = await message.reply_text("⏳ **Checking Link...**")
+
+    # DIRECT DOWNLOAD SETTINGS
+    opts = {
+        'format': 'best[ext=mp4]/best', 
+        'outtmpl': f'video_{message.from_user.id}.mp4',
+        'quiet': True,
+        'nocheckcertificate': True,
+        'extractor_args': {'youtube': {'player_client': ['android']}},
+    }
+
+    try:
+        await status_msg.edit_text("⬇️ **Downloading...**")
+        
+        # Run in thread
+        def run_dl():
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([url])
+        
+        await asyncio.to_thread(run_dl)
+
+        filename = f'video_{message.from_user.id}.mp4'
+        
+        # Fallback check
+        if not os.path.exists(filename):
+             for f in os.listdir('.'):
+                 if f.startswith(f'video_{message.from_user.id}'):
+                     filename = f
+                     break
+
+        if os.path.exists(filename):
+            await status_msg.edit_text("⬆️ **Uploading...**")
+            
+            caption_text = f"✅ **Downloaded via {BOT_USERNAME}**"
+            donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate / Support", url=DONATE_LINK)]])
+            
+            await app.send_video(
+                message.chat.id, 
+                video=filename, 
+                caption=caption_text,
+                reply_markup=donate_btn
+            )
+            os.remove(filename)
+            await status_msg.delete()
+        else:
+            await status_msg.edit_text("❌ Download Failed (File not found).")
+
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error: {e}")
+
+if __name__ == '__main__':
+    print("🌍 Starting Web Server...")
+    start_web_server()
+    print("🤖 Starting Pyrogram Client...")
+    app.run()
