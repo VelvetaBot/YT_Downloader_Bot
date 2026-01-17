@@ -14,7 +14,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "Velveta Bot (Website Mode) is Alive!"
+    return "Velveta Bot is Alive!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -75,7 +75,7 @@ def humanbytes(size):
 def time_formatter(milliseconds: int) -> str:
     seconds, milliseconds = divmod(int(milliseconds), 1000)
     minutes, seconds = divmod(seconds, 60)
-    hours, minutes = divmod(hours, 60)
+    hours, minutes = divmod(minutes, 60)
     days, hours = divmod(hours, 24)
     tmp = ((str(days) + "d, ") if days else "") + \
         ((str(hours) + "h, ") if hours else "") + \
@@ -83,17 +83,16 @@ def time_formatter(milliseconds: int) -> str:
         ((str(seconds) + "s, ") if seconds else "")
     return tmp[:-2]
 
-# --- API FUNCTION (Cobalt/Website) ---
+# --- API FUNCTION (New Working Server) ---
 def get_download_link(url, quality):
-    # మనం కుక్కీస్ బదులు API వాడుతున్నాం
-    api_url = "https://api.cobalt.tools/api/json"
+    # 👇 పాత లింక్ తీసేసి, పని చేసే కొత్త సర్వర్ లింక్ పెట్టాను (Mirror)
+    api_url = "https://co.wuk.sh/api/json" 
+    
     headers = {
         "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
+        "Content-Type": "application/json"
     }
     
-    # Quality Setup
     v_quality = "720"
     is_audio = False
     
@@ -137,7 +136,6 @@ async def handle_link(client, message):
     url = message.text
     if "http" not in url: return
 
-    # Quality Buttons
     buttons = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎥 720p (HD)", callback_data=f"720|{message.from_user.id}")],
         [InlineKeyboardButton("🎥 360p (SD)", callback_data=f"360|{message.from_user.id}")],
@@ -150,7 +148,6 @@ async def handle_link(client, message):
         quote=True
     )
 
-# --- CALLBACK HANDLER ---
 @app.on_callback_query()
 async def cb_handler(client, query):
     data = query.data.split("|")
@@ -162,16 +159,14 @@ async def cb_handler(client, query):
         return
 
     url = query.message.reply_to_message.text
-    await query.message.edit("🔄 **Connecting to Website...**")
+    await query.message.edit("🔄 **Connecting to Server...**")
     
-    # 1. Get Link from Website API
     direct_link = await asyncio.to_thread(get_download_link, url, quality)
     
     if not direct_link:
-        await query.message.edit("❌ Website is busy/error. Try again later.")
+        await query.message.edit("❌ Server Busy. Please try another link.")
         return
 
-    # 2. Download to Server
     filename = f"video_{user_id}.mp4"
     if quality == "mp3": filename = f"audio_{user_id}.mp3"
     
@@ -181,29 +176,26 @@ async def cb_handler(client, query):
         def download_file():
             with requests.get(direct_link, stream=True) as r:
                 r.raise_for_status()
-                total_size = int(r.headers.get('content-length', 0))
-                downloaded = 0
                 with open(filename, 'wb') as f:
                     for chunk in r.iter_content(chunk_size=8192):
                         f.write(chunk)
-                        downloaded += len(chunk)
-                        # (Note: Progress inside requests is hard to sync with async, 
-                        # so we show progress during upload mostly)
         
-        await query.message.edit("⬇️ **Downloading from Web...**")
+        await query.message.edit("⬇️ **Downloading...**")
         await asyncio.to_thread(download_file)
 
-        # 3. Upload to Telegram
         if os.path.exists(filename):
             await query.message.edit("⬆️ **Uploading...**")
             
             donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate", url="https://buymeacoffee.com/VelvetaBots")]])
             
+            # Caption for Reply
+            caption_text = f"✅ **Downloaded: {quality.upper()}**" if quality == "mp3" else f"✅ **Downloaded: {quality}p**"
+
             if quality == "mp3":
                 await app.send_audio(
                     query.message.chat.id, 
                     audio=filename, 
-                    caption="✅ **Downloaded: MP3**",
+                    caption=caption_text,
                     reply_to_message_id=query.message.reply_to_message.id,
                     reply_markup=donate_btn,
                     progress=progress,
@@ -213,7 +205,7 @@ async def cb_handler(client, query):
                 await app.send_video(
                     query.message.chat.id, 
                     video=filename, 
-                    caption=f"✅ **Downloaded: {quality}p**",
+                    caption=caption_text,
                     reply_to_message_id=query.message.reply_to_message.id,
                     reply_markup=donate_btn,
                     progress=progress,
@@ -223,7 +215,7 @@ async def cb_handler(client, query):
             os.remove(filename)
             await query.message.delete()
         else:
-            await query.message.edit("❌ File not found.")
+            await query.message.edit("❌ Download Error.")
 
     except Exception as e:
         await query.message.edit(f"❌ Error: {e}")
@@ -231,4 +223,4 @@ async def cb_handler(client, query):
 if __name__ == '__main__':
     start_web_server()
     app.run()
-        
+    
