@@ -1,3 +1,37 @@
+# requirements.txt లో add చేయండి:
+invidious
+```
+
+కానీ ఇది complex గా ఉంటుంది.
+
+## ⚡ Solution 4: Update yt-dlp Version (Most Important!)
+
+**requirements.txt** ని ఇలా మార్చండి:
+```
 python-telegram-bot==21.0.1
-yt-dlp==2024.12.23
+yt-dlp
 aiohttp==3.9.1
+```
+
+(version number తీసివేస్తే అది latest version download చేస్తుంది)
+
+## 📊 Which Videos Will Work?
+
+✅ **పని చేస్తుంది:**
+- Public videos without age restrictions
+- Short videos (< 10 minutes)
+- Standard YouTube videos
+- Non-monetized content
+
+❌ **పని చేయదు:**
+- Age-restricted videos
+- Private/Unlisted videos
+- Some monetized content
+- Geographic restricted content
+
+## 🔧 Quick Test:
+
+ఈ videos తో test చేయండి (usually work చేస్తాయి):
+```
+https://www.youtube.com/watch?v=jNQXAC9IVRw
+(Me at the zoo - first YouTube video)
