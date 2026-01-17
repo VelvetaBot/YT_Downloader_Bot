@@ -39,19 +39,19 @@ async def handle_link(client, message):
     url = message.text
     if "http" not in url: return
 
-    status_msg = await message.reply_text("🔄 **Processing with iOS Mode...**")
+    status_msg = await message.reply_text("🍪 **Using Android Mode with Cookies...**")
 
-    # 👇 iOS Client ని వాడుతున్నాం. ఇది 'n challenge' ఎర్రర్‌ని ఫిక్స్ చేస్తుంది.
+    # 👇 మార్పు: iOS తీసేసి Android పెట్టాము. ఇది కుక్కీస్‌తో పనిచేస్తుంది.
     ydl_opts = {
-        'format': 'best', 
+        'format': 'best',
         'outtmpl': f'video_{message.from_user.id}.%(ext)s',
-        'cookiefile': 'cookies.txt',  # కుక్కీస్ కచ్చితంగా ఉండాలి
+        'cookiefile': 'cookies.txt', # కుక్కీస్ కచ్చితంగా ఉండాలి
         'quiet': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios'],  # <--- ఇదే అసలైన మార్పు
+                'player_client': ['android'], # <--- Android Client (Best for Cookies)
             }
         }
     }
@@ -69,12 +69,12 @@ async def handle_link(client, message):
             await app.send_video(
                 message.chat.id, 
                 video=filename, 
-                caption="✅ **Downloaded!**"
+                caption="✅ **Downloaded Successfully!**"
             )
             os.remove(filename)
             await status_msg.delete()
         else:
-            await status_msg.edit_text("❌ Failed. Try updating cookies again.")
+            await status_msg.edit_text("❌ Download Failed. Check Cookie file.")
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Error: {e}")
