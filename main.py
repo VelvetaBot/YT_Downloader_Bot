@@ -7,7 +7,7 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
 
-# --- WEB SERVER ---
+# --- 1. WEB SERVER (Koyeb కోసం) ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
@@ -23,35 +23,36 @@ def start_web_server():
     t.daemon = True
     t.start()
 
-# --- CONFIG ---
+# --- 2. CONFIGURATION ---
 API_ID = 11253846                   
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
 BOT_TOKEN = "8034075115:AAHKc9YkRmEgba3Is9dhhW8v-7zLmLwjVac"
 
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
+# --- 3. COMMANDS ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("🌟 **Send me a Link! I have Cookies now! 🍪**")
+    await message.reply_text("🌟 **Velveta Bot Ready! Send me a link!**")
 
 @app.on_message(filters.text & ~filters.command("start"))
 async def handle_link(client, message):
     url = message.text
     if "http" not in url: return
 
-    status_msg = await message.reply_text("🍪 **Using Cookies to Login...**")
+    status_msg = await message.reply_text("🍪 **Processing with Cookies...**")
 
-    # 👇 ఇక్కడ మార్పు: కుక్కీస్ ఫైల్ వాడుతున్నాం
+    # 👇 FIX: ఫార్మాట్ ఏదైనా పర్వాలేదు, బెస్ట్ క్వాలిటీ కావాలి అని చెప్పాం.
     ydl_opts = {
-        'format': 'best[ext=mp4]/best', 
+        'format': 'best[ext=mp4]/best',  # MP4 దొరక్కపోతే ఉన్నది ఇవ్వు అని అర్థం
         'outtmpl': f'video_{message.from_user.id}.mp4',
-        'cookiefile': 'cookies.txt',  # <--- ఇదే అసలైన మ్యాజిక్
+        'cookiefile': 'cookies.txt',     # కుక్కీస్ వాడుతున్నాం
         'quiet': True,
         'nocheckcertificate': True
     }
 
     try:
-        await status_msg.edit_text("⬇️ **Downloading (Signed In)...**")
+        await status_msg.edit_text("⬇️ **Downloading...**")
         
         def run_download():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -66,12 +67,13 @@ async def handle_link(client, message):
             await app.send_video(
                 message.chat.id, 
                 video=filename, 
-                caption="✅ **Downloaded with Cookies! 🍪**"
+                caption="✅ **Downloaded Successfully!**",
+                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate", url="https://buymeacoffee.com/VelvetaBots")]])
             )
             os.remove(filename)
             await status_msg.delete()
         else:
-            await status_msg.edit_text("❌ Failed even with cookies. Try updating the cookie file.")
+            await status_msg.edit_text("❌ Download Failed! Cookies might be expired or Format issue.")
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Error: {e}")
