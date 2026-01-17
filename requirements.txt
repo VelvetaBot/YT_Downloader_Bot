@@ -2,5 +2,4 @@ pyrogram
 tgcrypto
 yt-dlp
 flask
-ffmpeg-python
 imageio-ffmpeg
