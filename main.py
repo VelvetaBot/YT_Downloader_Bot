@@ -2,103 +2,81 @@ import sys
 import os
 import asyncio
 import time
-import yt_dlp
+import threading
+from flask import Flask
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from keep_alive import keep_alive
+import yt_dlp
 
-# --- 1. REMOVED SILENT LOGGER (Let's see the errors!) ---
-# We need to see what is happening in the logs.
+# --- 1. WEB SERVER (Koyeb Needs This to Stay Alive) ---
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    return "Velveta Bot is Alive and Running!"
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    web_app.run(host='0.0.0.0', port=port)
+
+def start_web_server():
+    t = threading.Thread(target=run_web_server)
+    t.daemon = True
+    t.start()
 
 # --- 2. CONFIGURATION ---
 API_ID = 11253846                   
 API_HASH = "8db4eb50f557faa9a5756e64fb74a51a" 
 BOT_TOKEN = "8034075115:AAHKc9YkRmEgba3Is9dhhW8v-7zLmLwjVac"
 
-app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True, ipv6=True)
+# Client Setup
+app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
-# --- 3. PROGRESS BAR ---
-async def progress(current, total, message, start_time, status_text):
-    try:
-        now = time.time()
-        diff = now - start_time
-        if round(diff % 5.00) == 0 or current == total:
-            percentage = current * 100 / total
-            bar = "▓" * int(percentage / 10) + "░" * (10 - int(percentage / 10))
-            text = f"{status_text}\n{bar} **{round(percentage, 1)}%**"
-            if message.text != text:
-                await message.edit_text(text)
-    except:
-        pass 
-
-# --- 4. START COMMAND ---
+# --- 3. START COMMAND ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("🛠️ **Debug Mode Active**\nSend a link. I will tell you EXACTLY what is wrong if it fails.")
+    await message.reply_text("✅ **Bot Started Successfully!**\nSend me a link to test.")
 
-# --- 5. SIMPLE DOWNLOAD HANDLER ---
+# --- 4. DOWNLOAD HANDLER ---
 @app.on_message(filters.text & ~filters.command("start"))
 async def handle_link(client, message):
     url = message.text
     if "http" not in url: return
 
-    msg = await message.reply_text("📝 **Reading Metadata...**")
-    
-    # Generate unique filename
-    filename = f"test_{message.from_user.id}_{int(time.time())}.mp4"
-    
-    # 🔴 HARDCODED OPTIONS FOR STABILITY
-    # We force Format 18 (360p MP4). This exists for 99% of videos.
+    status_msg = await message.reply_text("⏳ **Checking...**")
+
+    # DIRECT DOWNLOAD SETTINGS (No Cookies, No FFmpeg)
     opts = {
-        'format': '18',  # 360p MP4 (Safest)
-        'outtmpl': filename,
-        'quiet': False,  # Show errors in logs
-        'verbose': True, # Show DETAILED errors
-        'cookiefile': 'cookies.txt', # Must exist in repo
+        'format': '18', # 360p MP4 (Works everywhere)
+        'outtmpl': f'video_{message.from_user.id}.mp4',
+        'quiet': True,
         'nocheckcertificate': True,
-        'ignoreerrors': True,
-        'no_warnings': False,
-        # Force IPv4 because Koyeb IPv6 sometimes gets blocked
-        'force_ipv4': True, 
     }
 
     try:
-        await msg.edit_text(f"⬇️ **Trying to Download (360p)...**\n`{url}`")
+        await status_msg.edit_text("⬇️ **Downloading...**")
         
-        # Run download in thread
-        def download_sync():
+        # Run in thread
+        def run_dl():
             with yt_dlp.YoutubeDL(opts) as ydl:
-                return ydl.download([url])
+                ydl.download([url])
         
-        await asyncio.to_thread(download_sync)
-        
-        if not os.path.exists(filename):
-            await msg.edit_text("❌ **Download Failed:** File not found after download attempt.\nCheck Koyeb Logs.")
-            return
+        await asyncio.to_thread(run_dl)
 
-        await msg.edit_text("⬆️ **Uploading...**")
-        start_time = time.time()
+        filename = f'video_{message.from_user.id}.mp4'
         
-        await app.send_video(
-            message.chat.id, 
-            video=filename, 
-            caption="✅ **Test Success (360p)**", 
-            progress=progress, 
-            progress_args=(msg, start_time, "⬆️ Uploading")
-        )
-        await msg.delete()
+        if os.path.exists(filename):
+            await status_msg.edit_text("⬆️ **Uploading...**")
+            await app.send_video(message.chat.id, video=filename, caption="✅ **Download Success**")
+            os.remove(filename)
+        else:
+            await status_msg.edit_text("❌ Download Failed (File not found).")
 
     except Exception as e:
-        # PRINT THE ERROR TO USER
-        error_text = str(e)
-        print(f"ERROR: {error_text}") # Print to Koyeb Console
-        await msg.edit_text(f"❌ **CRITICAL ERROR:**\n`{error_text}`")
-        
-    finally:
-        if os.path.exists(filename): 
-            os.remove(filename)
+        await status_msg.edit_text(f"❌ Error: {e}")
 
 if __name__ == '__main__':
-    keep_alive()
-    print("✅ Debug Bot Started")
+    print("🌍 Starting Web Server...")
+    start_web_server()
+    print("🤖 Starting Pyrogram Client...")
     app.run()
