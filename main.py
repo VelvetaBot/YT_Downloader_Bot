@@ -34,8 +34,8 @@ app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in
 @app.on_message(filters.command("start"))
 async def start(client, message):
     await message.reply_text(
-        "🌟 **Velveta Downloader Ready!**\n\n"
-        "Just send me a YouTube link, I will download it instantly! ⚡",
+        "🌟 **Velveta Downloader (Anti-Bot Mode) Ready!**\n\n"
+        "Send me a link, I will try to bypass YouTube protection! 🛡️",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📢 Join Channel", url="https://t.me/Velvetabots")]])
     )
 
@@ -44,16 +44,21 @@ async def handle_link(client, message):
     url = message.text
     if "http" not in url: return
 
-    status_msg = await message.reply_text("⏳ **Searching Video...**")
+    status_msg = await message.reply_text("⏳ **Bypassing Bot Detection...**")
 
-    # 👇 ఇక్కడ మార్పు చేశాం: ఏ ఫార్మాట్ ఉన్నా పర్లేదు అని చెప్పాం.
+    # 👇 ఇదే అసలైన ఫిక్స్ (Android Spoofing)
     ydl_opts = {
         'format': 'best[ext=mp4]/best', 
         'outtmpl': f'video_{message.from_user.id}.mp4',
         'quiet': True,
-        'noplaylist': True,
-        'geo_bypass': True,
         'nocheckcertificate': True,
+        # మనం ఆండ్రాయిడ్ ఫోన్ లాగా నటిస్తున్నాం
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios'],
+                'player_skip': ['web', 'tv']
+            }
+        }
     }
 
     try:
@@ -72,16 +77,17 @@ async def handle_link(client, message):
             await app.send_video(
                 message.chat.id, 
                 video=filename, 
-                caption="✅ **Downloaded by @VelvetaYTDownloaderBot**",
+                caption="✅ **Downloaded Successfully!**",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate", url="https://buymeacoffee.com/VelvetaBots")]])
             )
             os.remove(filename)
             await status_msg.delete()
         else:
-            await status_msg.edit_text("❌ Download Failed! Try another link.")
+            await status_msg.edit_text("❌ Failed: YouTube blocked the request.")
 
     except Exception as e:
-        await status_msg.edit_text(f"❌ Error: {e}")
+        # ఎర్రర్ వస్తే క్లియర్ గా చూపించు
+        await status_msg.edit_text(f"❌ Error: {str(e)}")
 
 if __name__ == '__main__':
     start_web_server()
