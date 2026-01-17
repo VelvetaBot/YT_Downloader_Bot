@@ -5,11 +5,9 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "I am alive"
+    return "Velveta Bot is Alive! 🌟"
 
 def run():
-    # Render assigns a port automatically via the PORT environment variable
-    # If not found, it defaults to 8080
     app.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
