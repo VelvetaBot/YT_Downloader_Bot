@@ -4,17 +4,17 @@ import time
 import math
 import asyncio
 import threading
+import requests
 from flask import Flask
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-import yt_dlp
 
-# --- WEB SERVER (Koyeb కోసం) ---
+# --- WEB SERVER ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "Velveta Bot is Alive!"
+    return "Velveta Bot (Website Mode) is Alive!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -32,7 +32,7 @@ BOT_TOKEN = "8034075115:AAHKc9YkRmEgba3Is9dhhW8v-7zLmLwjVac"
 
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
-# --- PROGRESS BAR ANIMATION ---
+# --- PROGRESS ANIMATION ---
 async def progress(current, total, message, start_time):
     now = time.time()
     diff = now - start_time
@@ -63,8 +63,7 @@ async def progress(current, total, message, start_time):
             pass
 
 def humanbytes(size):
-    if not size:
-        return ""
+    if not size: return ""
     power = 2**10
     n = 0
     Dic_powerN = {0: ' ', 1: 'Ki', 2: 'Mi', 3: 'Gi', 4: 'Ti'}
@@ -76,7 +75,7 @@ def humanbytes(size):
 def time_formatter(milliseconds: int) -> str:
     seconds, milliseconds = divmod(int(milliseconds), 1000)
     minutes, seconds = divmod(seconds, 60)
-    hours, minutes = divmod(minutes, 60)
+    hours, minutes = divmod(hours, 60)
     days, hours = divmod(hours, 24)
     tmp = ((str(days) + "d, ") if days else "") + \
         ((str(hours) + "h, ") if hours else "") + \
@@ -84,7 +83,42 @@ def time_formatter(milliseconds: int) -> str:
         ((str(seconds) + "s, ") if seconds else "")
     return tmp[:-2]
 
-# --- START COMMAND ---
+# --- API FUNCTION (Cobalt/Website) ---
+def get_download_link(url, quality):
+    # మనం కుక్కీస్ బదులు API వాడుతున్నాం
+    api_url = "https://api.cobalt.tools/api/json"
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    # Quality Setup
+    v_quality = "720"
+    is_audio = False
+    
+    if quality == "360":
+        v_quality = "360"
+    elif quality == "mp3":
+        is_audio = True
+
+    data = {
+        "url": url,
+        "vQuality": v_quality,
+        "isAudioOnly": is_audio,
+    }
+    
+    try:
+        response = requests.post(api_url, json=data, headers=headers)
+        data = response.json()
+        if "url" in data:
+            return data["url"]
+        else:
+            return None
+    except:
+        return None
+
+# --- COMMANDS ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
     welcome_text = (
@@ -95,31 +129,28 @@ async def start(client, message):
         "2️⃣ Select Quality ✨\n"
         "3️⃣ Wait for the magic! 📥"
     )
-    # Join Channel Button
     buttons = InlineKeyboardMarkup([[InlineKeyboardButton("Join update channel", url="https://t.me/VelvetaBots")]])
     await message.reply_text(welcome_text, reply_markup=buttons)
 
-# --- LINK HANDLER ---
 @app.on_message(filters.text & ~filters.command("start"))
 async def handle_link(client, message):
     url = message.text
     if "http" not in url: return
 
-    # Quality Selection Buttons (Vidssave Style)
+    # Quality Buttons
     buttons = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎥 720p (HD)", callback_data=f"720|{message.from_user.id}")],
         [InlineKeyboardButton("🎥 360p (SD)", callback_data=f"360|{message.from_user.id}")],
         [InlineKeyboardButton("🎵 Audio (MP3)", callback_data=f"mp3|{message.from_user.id}")]
     ])
     
-    # Save URL in a temporary way (using message reply context)
     await message.reply_text(
         "**Select Quality:** ✨\nchoose one option below:",
         reply_markup=buttons,
-        quote=True # Reply to the link
+        quote=True
     )
 
-# --- CALLBACK (BUTTON CLICK) ---
+# --- CALLBACK HANDLER ---
 @app.on_callback_query()
 async def cb_handler(client, query):
     data = query.data.split("|")
@@ -127,85 +158,31 @@ async def cb_handler(client, query):
     user_id = int(data[1])
 
     if query.from_user.id != user_id:
-        await query.answer("This is not your request!", show_alert=True)
+        await query.answer("Not your request!", show_alert=True)
         return
 
-    # URL ని పాత మెసేజ్ నుండి తీసుకోవడం
     url = query.message.reply_to_message.text
-    await query.message.edit("🔄 **Processing...**")
+    await query.message.edit("🔄 **Connecting to Website...**")
+    
+    # 1. Get Link from Website API
+    direct_link = await asyncio.to_thread(get_download_link, url, quality)
+    
+    if not direct_link:
+        await query.message.edit("❌ Website is busy/error. Try again later.")
+        return
+
+    # 2. Download to Server
+    filename = f"video_{user_id}.mp4"
+    if quality == "mp3": filename = f"audio_{user_id}.mp3"
     
     start_time = time.time()
-
-    # Options Setup
-    ydl_opts = {
-        'cookiefile': 'cookies.txt', # Cookies Required
-        'quiet': True,
-        'nocheckcertificate': True,
-        'geo_bypass': True,
-        'outtmpl': f'download_{user_id}.%(ext)s',
-        'extractor_args': {'youtube': {'player_client': ['android']}}, # Android Mode
-    }
-
-    # Quality Logic
-    if quality == "720":
-        ydl_opts['format'] = 'best[height<=720][ext=mp4]/best[ext=mp4]'
-    elif quality == "360":
-        ydl_opts['format'] = '18' # Safe Mode (Best for Errors)
-    elif quality == "mp3":
-        ydl_opts['format'] = 'bestaudio/best'
-        ydl_opts['postprocessors'] = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}]
-
+    
     try:
-        # Downloading
-        def run_download():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                return ydl.prepare_filename(info)
-        
-        filename = await asyncio.to_thread(run_download)
-
-        # Uploading
-        if os.path.exists(filename):
-            # Change filename for MP3 if needed
-            if quality == "mp3" and not filename.endswith(".mp3"):
-                new_name = filename.rsplit(".", 1)[0] + ".mp3"
-                if os.path.exists(new_name): filename = new_name
-
-            await query.message.edit("⬆️ **Uploading...**")
-            
-            # Donate Button
-            donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Donate", url="https://buymeacoffee.com/VelvetaBots")]])
-
-            if quality == "mp3":
-                await app.send_audio(
-                    query.message.chat.id, 
-                    audio=filename, 
-                    caption=f"✅ **Downloaded: {quality.upper()}**",
-                    reply_to_message_id=query.message.reply_to_message.id,
-                    reply_markup=donate_btn,
-                    progress=progress,
-                    progress_args=(query.message, start_time)
-                )
-            else:
-                await app.send_video(
-                    query.message.chat.id, 
-                    video=filename, 
-                    caption=f"✅ **Downloaded: {quality}p**",
-                    reply_to_message_id=query.message.reply_to_message.id,
-                    reply_markup=donate_btn,
-                    progress=progress,
-                    progress_args=(query.message, start_time)
-                )
-            
-            os.remove(filename)
-            await query.message.delete()
-        else:
-            await query.message.edit("❌ Download Failed.")
-
-    except Exception as e:
-        await query.message.edit(f"❌ Error: {str(e)}")
-
-if __name__ == '__main__':
-    start_web_server()
-    app.run()
+        def download_file():
+            with requests.get(direct_link, stream=True) as r:
+                r.raise_for_status()
+                total_size = int(r.headers.get('content-length', 0))
+                downloaded = 0
+                with open(filename, 'wb') as f:
+                    for chunk in
     
