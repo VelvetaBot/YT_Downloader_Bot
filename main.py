@@ -64,10 +64,8 @@ def get_cookie_file():
 async def start(client, message):
     welcome_text = (
         f"👋 **Hello! I am {BOT_USERNAME}**\n\n"
-        "I am fixed and ready to download High Quality videos!\n\n"
-        "**🚀 Capabilities:**\n"
-        "• 1080p / 720p / 360p / MP3\n"
-        "• Anti-Block System Active ✅\n\n"
+        "✅ **Fixed & Permanent Version**\n"
+        "I will download the best available quality automatically.\n\n"
         "**⚡ Just send me a YouTube link!**"
     )
     buttons = [[InlineKeyboardButton("📢 Updates Channel", url=CHANNEL_LINK)]]
@@ -85,14 +83,12 @@ async def handle_link(client, message):
     global url_store
     url_store[user_id] = {'url': url, 'msg_id': message.id}
     
-    # Analyze Video Info
-    msg = await message.reply_text("🔎 **Analyzing Link...**", quote=True)
+    msg = await message.reply_text("🔎 **Checking Video...**", quote=True)
     try:
-        # Initial Info Extraction Options
+        # Use simple options just to get title
         opts = {
             'quiet': True, 'noprogress': True, 'logger': silent_logger,
             'cookiefile': get_cookie_file(),
-            # TRICK YOUTUBE: Pretend to be Android to avoid empty file errors
             'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         }
         
@@ -102,18 +98,18 @@ async def handle_link(client, message):
         await msg.delete()
         
         buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💎 1080p", callback_data="1080"), InlineKeyboardButton("📀 720p", callback_data="720")],
-            [InlineKeyboardButton("📱 360p", callback_data="360"), InlineKeyboardButton("🎧 Audio (MP3)", callback_data="mp3")]
+            [InlineKeyboardButton("💎 High Quality (Auto)", callback_data="high")],
+            [InlineKeyboardButton("📱 Medium (360p)", callback_data="low"), InlineKeyboardButton("🎧 Audio (MP3)", callback_data="mp3")]
         ])
         
-        await message.reply_text(f"🎬 **{title}**\n\n👇 **Select Quality:**", reply_markup=buttons, quote=True)
+        await message.reply_text(f"🎬 **{title}**\n\n👇 **Select Option:**", reply_markup=buttons, quote=True)
         
     except Exception as e:
         await msg.edit_text(f"⚠️ **Error:** {e}")
 
 url_store = {}
 
-# --- SYNC FUNCTIONS (Run in Thread) ---
+# --- SYNC FUNCTIONS ---
 def run_sync_download(opts, url):
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.download([url])
@@ -140,42 +136,37 @@ async def callback(client, query):
     status_msg = await query.message.reply_text("⚡ **Starting Download...**")
     filename = f"vid_{user_id}_{int(time.time())}"
     
-    # --- QUALITY SELECTION LOGIC ---
+    # --- 🟢 PERMANENT SOLUTION: SMART FORMATS ---
+    # This logic prevents "Format Not Available" error
+    
     if data == "mp3":
-        # Audio Only
         ydl_fmt = 'bestaudio/best'
         ext = 'mp3'
-    elif data == "1080":
-        # Try 1080, fallback to best available
-        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
-        ext = 'mp4'
-    elif data == "720":
-        # Try 720, fallback to best available
-        ydl_fmt = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
+    elif data == "high":
+        # Try 1080p, if fails -> 720p, if fails -> Best Available
+        # The '/best' at the end is the safety net
+        ydl_fmt = 'bestvideo[height<=1080]+bestaudio/bestvideo[height<=720]+bestaudio/best[height<=1080]/best'
         ext = 'mp4'
     else: 
-        # 360p
+        # Low/Medium Quality
         ydl_fmt = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best'
         ext = 'mp4'
 
-    # --- KEY FIX FOR "EMPTY FILE" ERROR ---
     opts = {
         'format': ydl_fmt, 
         'outtmpl': f'{filename}.%(ext)s',
         'quiet': True, 'noprogress': True, 'logger': silent_logger,
         'cookiefile': get_cookie_file(),
         
-        # CRITICAL: Spoof Android Client to bypass throttling/empty files
+        # Spoofing to prevent blocking
         'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
-        'check_formats': True,
+        
+        # Don't fail if format is missing, just pick next best
+        'ignoreerrors': True,
         
         'writethumbnail': True, 
         'postprocessors': [{'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'}],
-        
-        # Network Stability
         'concurrent_fragment_downloads': 5, 
-        'retries': 10,
-        'fragment_retries': 10,
     }
     
     if data != "mp3":
@@ -187,29 +178,33 @@ async def callback(client, query):
     thumb_path = f"{filename}.jpg" 
 
     try:
-        await status_msg.edit_text("📥 **Downloading Video...**\n(This may take time for HD)")
+        await status_msg.edit_text("📥 **Downloading...**\n(Using Smart-Quality Mode)")
         
         # Download
         await asyncio.to_thread(run_sync_download, opts, url)
 
-        # Check if file exists and is not empty
+        # FINAL CHECK: If file is missing, try Emergency Fallback (Basic MP4)
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
-            raise Exception("Download Failed: File is empty (YouTube Blocked). Try MP3 or lower quality.")
+            await status_msg.edit_text("⚠️ High Quality failed, trying Standard quality...")
+            # Emergency Fallback: Just get 'best' single file (no merge needed)
+            opts['format'] = 'best'
+            await asyncio.to_thread(run_sync_download, opts, url)
+            
+            if not os.path.exists(final_path):
+                 raise Exception("Download completely failed.")
 
-        await status_msg.edit_text("☁️ **Uploading to Telegram...**")
+        await status_msg.edit_text("☁️ **Uploading...**")
         start_time = time.time()
         
         donate_btn = InlineKeyboardMarkup([[InlineKeyboardButton("☕ Support", url=DONATE_LINK)]])
         thumb = thumb_path if os.path.exists(thumb_path) else None
-
-        caption_text = f"✅ **Downloaded via {BOT_USERNAME}**"
 
         if data == "mp3":
             await app.send_audio(
                 query.message.chat.id, 
                 audio=final_path, 
                 thumb=thumb,
-                caption=caption_text, 
+                caption=f"✅ **Downloaded via {BOT_USERNAME}**", 
                 reply_to_message_id=original_msg_id, 
                 reply_markup=donate_btn,
                 progress=progress, 
@@ -220,7 +215,7 @@ async def callback(client, query):
                 query.message.chat.id, 
                 video=final_path, 
                 thumb=thumb,
-                caption=caption_text, 
+                caption=f"✅ **Downloaded via {BOT_USERNAME}**", 
                 supports_streaming=True, 
                 reply_to_message_id=original_msg_id, 
                 reply_markup=donate_btn,
@@ -231,12 +226,12 @@ async def callback(client, query):
         await status_msg.delete()
 
     except Exception as e:
-        await status_msg.edit_text(f"⚠️ **Failed:** {e}")
+        await status_msg.edit_text(f"⚠️ **Error:** {e}")
     finally:
         if os.path.exists(final_path): os.remove(final_path)
         if os.path.exists(thumb_path): os.remove(thumb_path)
 
 if __name__ == '__main__':
     keep_alive()
-    print(f"✅ Bot Started Successfully")
+    print(f"✅ Bot Started")
     app.run()
